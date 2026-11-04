@@ -7,6 +7,7 @@
 1. 自分のGitHub Issue（担当範囲・完了条件）
 2. [API契約 v1](docs/api/contract-v1.md)（通信の唯一の正）
 3. [システム設計](docs/architecture/README.md)
+4. [Slack OIDC認証設計](docs/auth/slack-oidc-v1.md)（Web/Backend/Slack担当は必読）
 
 **他の人の担当フォルダを勝手に書き換えない。** 特に `backend/` のSlack処理とAPI基盤は両担当で境界を確認する。
 
@@ -65,7 +66,7 @@
 - `.env.example` には**名前だけ**を記載し、値は架空値にする。
 - 公開リポジトリに実在する学生や先生への不満・実名付き投稿を置かない。
 - Gitに秘密鍵を誤ってpushした場合は、履歴から消すだけでなく**発行元で即時失効・再発行**する。
-- 人物IDと認証の候補は [認証・人物IDの検討メモ](docs/auth/identity-options.md) を参照。方式確定までは本物の人物宛てDMを送らない。
+- 認証・人物IDは [Slack OIDC 認証設計 v1](docs/auth/slack-oidc-v1.md) を参照。管理者によるSlack App利用の許可と本人同意がそろうまでは、実在の人物へのDMを送らない。
 
 ## 7. マージ前の最低限の確認
 
