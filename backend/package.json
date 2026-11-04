@@ -9,10 +9,12 @@
     "dev": "wrangler dev --local --ip 127.0.0.1 --port 8787",
     "test": "node --test test/*.test.*",
     "db:migrate": "wrangler d1 migrations apply DB --local",
-    "db:seed": "wrangler d1 execute DB --local --file seeds/development.sql"
+    "db:seed": "wrangler d1 execute DB --local --file seeds/development.sql",
+    "test:smoke": "node test/smoke-local.mjs"
   },
   "dependencies": {
-    "hono": "4.13.16"
+    "hono": "4.13.16",
+    "jose": "6.2.15"
   },
   "devDependencies": {
     "miniflare": "5.20261103.0-beta",

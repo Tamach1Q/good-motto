@@ -24,8 +24,26 @@ export function createRepository(db, { now = () => new Date() } = {}) {
   return {
     // 未設定・未マイグレーション・故障時はログインも含め成功扱いにしない。
     async checkReady() {
-      await rows('SELECT 1 FROM people, places, posts, slack_digest_deliveries LIMIT 0');
+      await rows('SELECT 1 FROM people, places, posts, slack_digest_deliveries, sessions, oauth_states LIMIT 0');
     },
+    async cleanupAuth() {
+      await query('DELETE FROM oauth_states WHERE expires_at <= ?', [now().getTime()], 'run');
+      await query('DELETE FROM sessions WHERE expires_at <= ?', [now().getTime()], 'run');
+    },
+    saveState: (hash, nonce, expiresAt) => query('INSERT INTO oauth_states (state_hash, nonce, expires_at) VALUES (?, ?, ?)',
+      [hash, nonce, expiresAt], 'run'),
+    // DELETE RETURNINGは単一SQL。並行callbackでもnonceを取得できるのは一度だけ。
+    consumeState: hash => first('DELETE FROM oauth_states WHERE state_hash = ? AND expires_at > ? RETURNING nonce', [hash, now().getTime()]),
+    saveSession: (hash, personId, expiresAt) => query('INSERT INTO sessions (token_hash, person_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
+      [hash, personId, expiresAt, now().getTime()], 'run'),
+    getSessionPerson: hash => first(`SELECT people.* FROM sessions JOIN people ON people.id = sessions.person_id
+      WHERE sessions.token_hash = ? AND sessions.expires_at > ?`, [hash, now().getTime()]),
+    deleteSession: hash => query('DELETE FROM sessions WHERE token_hash = ?', [hash], 'run'),
+    upsertSlackPerson: ({ teamId, userId, displayName }) => first(`INSERT INTO people
+      (id, slack_team_id, slack_user_id, display_name, terms_accepted_at, feedback_opt_in, created_at)
+      VALUES (?, ?, ?, ?, NULL, 0, ?)
+      ON CONFLICT (slack_team_id, slack_user_id) DO UPDATE SET display_name = excluded.display_name RETURNING *`,
+    [crypto.randomUUID(), teamId, userId, displayName, now().getTime()]),
     getPerson: person,
     async updatePreferences(id, { terms_accepted, feedback_opt_in }) {
       return first(`UPDATE people SET

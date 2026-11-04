@@ -2,9 +2,9 @@
 
 日常の Good / Motto を記録し、場所の状態を M5Stack で可視化し、人物向けの週次フィードバックを Slack で届けるシステムの開発リポジトリです。
 
-## ローカルAPI・D1・Gemini（GM-003）
+## API・Slack OIDC・D1・Gemini（GM-004）
 
-Workers + Honoの10エンドポイントを、ローカルD1と架空データで確認できます。ログインはモックです。分析はGemini設定が両方空なら固定応答、`GEMINI_API_KEY` と `GEMINI_MODEL` を両方指定するとGeminiを使います。片方だけの指定は503です。Node.js 24を使用し、リポジトリ直下で次を実行してください。
+Workers + Honoの10エンドポイントを、ローカルD1と架空データで確認できます。ログインはローカル開発のみモック、production/stagingでは単一ワークスペースのSlack OIDCです。ローカル分析はGemini設定が両方空なら固定応答、`GEMINI_API_KEY` と `GEMINI_MODEL` を両方指定するとGeminiを使います。片方だけの指定は503です。Node.js 24を使用し、リポジトリ直下で次を実行してください。
 
 ```sh
 npm run ci
@@ -15,7 +15,7 @@ cp backend/.dev.vars.example backend/.dev.vars
 npm run dev --prefix backend
 ```
 
-ベースURLは `http://127.0.0.1:8787`。開発設定を明示したローカル環境だけで動作し、それ以外は503を返します。投稿と同意はD1に保存され、開発サーバーの再起動後も残ります。実際のGeminiとの疎通・文章品質は未検証です。実在の人物や不満は確認に使わないでください。設定、実キーで後日確認する手順、内部要約モジュール、架空ユーザーの切替、curl例、Viteのliveモードでの結合確認手順、未実装の範囲は [backend/README.md](backend/README.md) を参照してください。
+ベースURLは `http://127.0.0.1:8787`。`ENV=development`はループバック限定です。`production` / `staging`はSlack OIDC必須設定とD1がすべてあればAPIが動作し、analyzeはGemini設定が両方必要です。未設定・その他のモードや必須設定欠落は全APIが503です。投稿・同意・セッションはD1に保存され、再起動後も同じCookieが有効です。実際のSlackとの接続、Geminiとの疎通・文章品質は未検証です。実在の人物や不満は確認に使わないでください。設定、実キーで後日確認する手順、内部要約モジュール、架空ユーザーの切替、curl例、Viteのliveモードでの結合確認手順、未実装の範囲は [backend/README.md](backend/README.md) を参照してください。
 
 ## システム設計
 

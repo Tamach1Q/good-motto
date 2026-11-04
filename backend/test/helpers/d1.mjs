@@ -16,13 +16,16 @@ export async function createD1(t, { migrate = true, seed = true } = {}) {
     compatibilityDate: '2026-11-04', d1Databases: { DB: 'gm002-tests' } }), enableDevRegistry: false });
   t.after(() => mf.dispose());
   const db = await mf.getD1Database('DB');
-  if (migrate) await applySql(db, '../../migrations/0001_post_data.sql');
+  if (migrate) {
+    await applySql(db, '../../migrations/0001_post_data.sql');
+    await applySql(db, '../../migrations/0002_auth.sql');
+  }
   if (migrate && seed) await applySql(db, '../../seeds/development.sql');
   return db;
 }
 
 export async function resetD1(db) {
-  await db.batch(['DELETE FROM slack_digest_deliveries', 'DELETE FROM posts', 'DELETE FROM people']
+  await db.batch(['DELETE FROM sessions', 'DELETE FROM oauth_states', 'DELETE FROM slack_digest_deliveries', 'DELETE FROM posts', 'DELETE FROM people']
     .map(sql => db.prepare(sql)));
   await applySql(db, '../../seeds/development.sql');
 }

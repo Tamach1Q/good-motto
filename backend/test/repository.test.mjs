@@ -7,16 +7,21 @@ const AT = new Date('2026-11-04T04:00:00.123Z');
 
 test('マイグレーションだけでは人物・投稿・送信履歴は空、場所と索引を作成する', async t => {
   const db = await createD1(t, { seed: false });
-  for (const table of ['people', 'posts', 'slack_digest_deliveries']) {
+  for (const table of ['people', 'posts', 'slack_digest_deliveries', 'sessions', 'oauth_states']) {
     assert.equal((await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first()).n, 0);
   }
   assert.deepEqual((await db.prepare('SELECT * FROM places ORDER BY id').all()).results,
     [{ id: 'kitchen', name: '共用キッチン' }, { id: 'laundry', name: '洗濯室' }]);
   const tables = (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).results.map(row => row.name);
-  assert.ok(!tables.includes('sessions') && !tables.includes('oauth_states'));
+  assert.ok(tables.includes('sessions') && tables.includes('oauth_states'));
+  assert.deepEqual((await db.prepare('PRAGMA table_info(sessions)').all()).results.map(r => r.name),
+    ['token_hash', 'person_id', 'expires_at', 'created_at']);
+  assert.deepEqual((await db.prepare('PRAGMA table_info(oauth_states)').all()).results.map(r => r.name),
+    ['state_hash', 'nonce', 'expires_at']);
   for (const [index, columns] of [
     ['posts_place_counts', ['target_type', 'target_id', 'created_at', 'sentiment']],
     ['posts_weekly_period', ['target_type', 'created_at']],
+    ['sessions_expiry', ['expires_at']], ['oauth_states_expiry', ['expires_at']],
   ]) assert.deepEqual((await db.prepare(`PRAGMA index_info(${index})`).all()).results.map(row => row.name), columns);
 });
 
