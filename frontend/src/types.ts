@@ -27,7 +27,17 @@ export interface PostInput {
   target_id: string;
 }
 export interface PostResult { post_id: string; status: 'created' }
+export interface SessionUser {
+  person_id: string;
+  display_name: string;
+  terms_accepted: boolean;
+  feedback_opt_in: boolean;
+}
+export interface Preferences { terms_accepted: boolean; feedback_opt_in: boolean }
 export interface Api {
+  me(signal?: AbortSignal): Promise<SessionUser>;
+  preferences(input: Preferences, signal?: AbortSignal): Promise<SessionUser>;
+  logout(signal?: AbortSignal): Promise<void>;
   analyze(text: string, signal?: AbortSignal): Promise<Analysis>;
   people(query: string, signal?: AbortSignal): Promise<Person[]>;
   places(signal?: AbortSignal): Promise<Place[]>;

@@ -3,6 +3,17 @@ import { createHttpApi } from '../src/api';
 
 afterEach(() => vi.unstubAllGlobals());
 describe('API契約v1との接続', () => {
+  it('本人照会・設定保存・204ログアウトに同じCookie通信を使う', async () => {
+    const user = { person_id: 'self', display_name: '田中', terms_accepted: true, feedback_opt_in: false };
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(user))).mockResolvedValueOnce(new Response(JSON.stringify(user))).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetch); const api = createHttpApi();
+    expect(await api.me()).toEqual(user);
+    await api.preferences({ terms_accepted: true, feedback_opt_in: false });
+    await api.logout();
+    expect(fetch).toHaveBeenNthCalledWith(1, '/api/v1/me', expect.objectContaining({ credentials: 'include' }));
+    expect(fetch).toHaveBeenNthCalledWith(2, '/api/v1/me/preferences', expect.objectContaining({ method: 'PATCH', body: '{"terms_accepted":true,"feedback_opt_in":false}' }));
+    expect(fetch).toHaveBeenNthCalledWith(3, '/api/v1/auth/logout', expect.objectContaining({ method: 'POST', credentials: 'include' }));
+  });
   it('人物検索を符号化して送信し、Cookie認証を含める', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ people: [{ id: 'p1', name: '田中' }] }), { status: 200 }));
     vi.stubGlobal('fetch', fetch);

@@ -12,8 +12,8 @@ export function PersonLabel({ person }: { person: Person }) {
   return <><Avatar person={person} /><span className="person-label"><strong>{person.name}</strong>{person.username ? <small>@{person.username.replace(/^@/, '')}</small> : <small>識別ID：{person.id}</small>}{person.workspace_label && <small>{person.workspace_label}</small>}</span></>;
 }
 
-export default function TargetPicker({ api, initialType, onSelect, onCancel }: {
-  api: Api; initialType: TargetType; onSelect: (target: Target) => void; onCancel: () => void;
+export default function TargetPicker({ api, initialType, onSelect, onCancel, onAccessError }: {
+  api: Api; onAccessError?: (error: unknown) => Promise<void>; initialType: TargetType; onSelect: (target: Target) => void; onCancel: () => void;
 }) {
   const [type, setType] = useState<TargetType>(initialType);
   const [query, setQuery] = useState('');
@@ -43,11 +43,11 @@ export default function TargetPicker({ api, initialType, onSelect, onCancel }: {
         setStatus('ready');
       } catch (e) {
         if (controller.signal.aborted || generation.current !== version) return;
-        setError(errorMessage(e)); setStatus('error');
+        setError(errorMessage(e)); setStatus('error'); await onAccessError?.(e);
       }
     }, type === 'person' ? 300 : 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [api, type, normalized, composing, retry]);
+  }, [api, type, normalized, composing, retry, onAccessError]);
 
   // 入力イベントで直ちに候補を無効化。古い応答が新しい検索語に混ざるのを防ぎます。
   function invalidate() { generation.current++; request.current?.abort(); setPeople([]); setPlaces([]); setActive(-1); setStatus('idle'); }
@@ -88,6 +88,7 @@ export default function TargetPicker({ api, initialType, onSelect, onCancel }: {
       {status === 'ready' && count === 0 && <div className="empty-state"><strong>該当する{type === 'person' ? 'メンバー' : '場所'}がいません</strong><p>{type === 'person' ? '別の漢字やSlackの表示名で検索してください。' : '場所の登録状況を担当者に確認してください。'}</p></div>}
     </div>
     {status === 'error' && <div className="error-panel" role="alert"><strong>候補を取得できませんでした</strong><p>{error}</p><p>入力したメモは残っています。</p><button className="secondary" onClick={() => setRetry(n => n + 1)}>再試行</button></div>}
+    {people.some((p, i) => people.some((other, j) => i !== j && p.name === other.name)) && <p className="hint">同じ名前の候補があります。識別情報で本人だと確認できない場合は、選ばずに担当者へ確認してください。</p>}
     <div id="target-results" role="listbox" aria-label={type === 'person' ? 'Slackメンバー候補' : '場所の候補'}>
       {status === 'ready' && (type === 'person' ? people.map((person, i) => <button type="button" role="option" aria-selected={active === i} id={`target-${i}`} key={person.id} className="candidate" onClick={() => select(i)}><PersonLabel person={person} /><span className="candidate-arrow" aria-hidden="true">→</span></button>)
         : places.map((place, i) => <button type="button" role="option" aria-selected={active === i} id={`target-${i}`} key={place.id} className="candidate" onClick={() => select(i)}><span className="avatar" aria-hidden="true">場</span><strong>{place.name}</strong><span className="candidate-arrow" aria-hidden="true">→</span></button>))}

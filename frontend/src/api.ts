@@ -1,4 +1,5 @@
-import type { Analysis, Api, Person, Place, PostResult } from './types';
+import type { Analysis, Api, Person, Place, PostResult, SessionUser } from './types';
+import { validateText } from './textValidation';
 
 export class ApiError extends Error {
   constructor(message: string, public status = 0, public code = 'NETWORK_ERROR') { super(message); }
@@ -6,6 +7,10 @@ export class ApiError extends Error {
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
 const string = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 function invalid(): never { throw new ApiError('応答を読み取れませんでした。時間をおいて再度お試しください。', 502, 'INVALID_RESPONSE'); }
+function session(d: unknown): SessionUser {
+  if (!record(d) || !string(d.person_id) || !string(d.display_name) || typeof d.terms_accepted !== 'boolean' || typeof d.feedback_opt_in !== 'boolean') invalid();
+  return d as unknown as SessionUser;
+}
 
 export function createHttpApi(base = ''): Api {
   const root = `${base.replace(/\/$/, '')}/api/v1`;
@@ -18,9 +23,10 @@ export function createHttpApi(base = ''): Api {
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 20000);
     try {
       const res = await fetch(root + path, {
-        ...init, credentials: 'include', signal: controller.signal,
+        ...init, credentials: 'include', cache: 'no-store', signal: controller.signal,
         headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
       });
+      if (res.status === 204 && res.ok) return undefined;
       let data: unknown;
       try { data = await res.json(); } catch { if (res.ok) invalid(); }
       if (!res.ok) {
@@ -39,7 +45,11 @@ export function createHttpApi(base = ''): Api {
     } finally { clearTimeout(timer); init.signal?.removeEventListener('abort', abort); }
   }
   return {
+    async me(signal) { return session(await request('/me', { signal })); },
+    async preferences(input, signal) { return session(await request('/me/preferences', { method: 'PATCH', body: JSON.stringify(input), signal })); },
+    async logout(signal) { await request('/auth/logout', { method: 'POST', signal }); },
     async analyze(text, signal) {
+      const error = validateText(text); if (error) throw new ApiError(error, 400, 'INVALID_REQUEST');
       const d = await request('/posts/analyze', { method: 'POST', body: JSON.stringify({ text }), signal });
       if (!record(d) || !['good', 'motto'].includes(String(d.sentiment)) || !['person', 'place', 'unknown'].includes(String(d.target_type)) || !(d.target_id === null || string(d.target_id)) || !(d.target_label == null || typeof d.target_label === 'string')) invalid();
       return d as unknown as Analysis;
@@ -58,6 +68,7 @@ export function createHttpApi(base = ''): Api {
       return d.places.map((p: unknown): Place => { if (!record(p) || !string(p.id) || !string(p.name)) invalid(); return { id: p.id, name: p.name }; });
     },
     async post(input, signal) {
+      const error = validateText(input.text); if (error) throw new ApiError(error, 400, 'INVALID_REQUEST');
       const d = await request('/posts', { method: 'POST', body: JSON.stringify(input), signal });
       if (!record(d) || !string(d.post_id) || d.status !== 'created') invalid();
       return d as unknown as PostResult;
@@ -81,6 +92,9 @@ async function wait(signal?: AbortSignal) {
   });
 }
 export const demoApi: Api = {
+  async me(signal) { await wait(signal); return { person_id: 'demo-self', display_name: 'デモ利用者', terms_accepted: true, feedback_opt_in: false }; },
+  async preferences(input, signal) { await wait(signal); return { person_id: 'demo-self', display_name: 'デモ利用者', ...input }; },
+  async logout(signal) { await wait(signal); },
   async analyze(text, signal) {
     await wait(signal);
     const place = demoPlaces.find(p => text.includes(p.name));
