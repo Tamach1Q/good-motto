@@ -14,4 +14,5 @@
 ## 共同開発
 
 - [GitHub運用ルール](CONTRIBUTING.md)
-- [認証と人物IDの設計候補](docs/auth/identity-options.md)
+- [Slack OpenID Connect 認証設計 v1（採用方式）](docs/auth/slack-oidc-v1.md)
+- [認証方式の比較資料](docs/auth/identity-options.md)
