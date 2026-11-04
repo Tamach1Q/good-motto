@@ -1,0 +1,7 @@
+{
+  "name": "good-motto-ci",
+  "private": true,
+  "scripts": {
+    "ci": "npm ci --prefix backend && npm test --prefix backend"
+  }
+}
