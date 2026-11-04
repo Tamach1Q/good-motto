@@ -3,10 +3,9 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { analysis } from './api/mock-data.mjs';
 import { createRepository, DatabaseUnavailable } from './data/repository.mjs';
 import { createGemini, GeminiError } from './ai/gemini.mjs';
+import { AuthError, authorizationUrl, createSlackOidc } from './auth/slack-oidc.mjs';
+import { SESSION_COOKIE, STATE_COOKIE, SESSION_SECONDS, STATE_SECONDS, COOKIE_OPTIONS, randomToken, hashToken } from './auth/tokens.mjs';
 
-const SESSION_COOKIE = '__Host-gm_session';
-const SESSION_SECONDS = 7 * 24 * 60 * 60;
-const COOKIE_OPTIONS = { httpOnly: true, secure: true, sameSite: 'Lax', path: '/' };
 const ERRORS = {
   400: ['INVALID_REQUEST', '入力を確認してください'],
   401: ['UNAUTHORIZED', '有効な認証情報が必要です'],
@@ -54,15 +53,18 @@ function publicPerson(person) {
 
 export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThis.fetch } = {}) {
   const app = new Hono();
-  const sessions = new Map();
+  const slack = createSlackOidc({ fetch: fetchImpl, now });
 
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     // ENVだけを誤設定しても公開ホストではモックを有効にしない。
     const hostname = new URL(c.req.url).hostname;
-    if (c.env?.ENV !== 'development' || !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
-      return errorResponse(c, 503);
-    }
+    const development = c.env?.ENV === 'development' && ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+    const oidc = ['production', 'staging'].includes(c.env?.ENV);
+    if (!development && !oidc) return errorResponse(c, 503);
+    if (oidc && ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_REDIRECT_URI', 'ALLOWED_SLACK_TEAM_ID', 'ALLOWED_ORIGIN']
+      .some(key => typeof c.env[key] !== 'string' || !c.env[key].trim() || c.env[key] === '*')) return errorResponse(c, 503);
+    c.set('oidc', oidc);
     const repo = createRepository(c.env?.DB, { now });
     await repo.checkReady();
     c.set('repo', repo);
@@ -71,15 +73,13 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
 
   const requireUser = async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
-    const session = sessions.get(token);
-    if (!session || session.expiresAt <= now().getTime()) {
-      if (session) sessions.delete(token);
-      throw new ApiError(401);
-    }
-    const person = await c.get('repo').getPerson(session.personId);
+    if (!token || !/^[0-9a-f]{64}$/.test(token)) throw new ApiError(401);
+    const hash = await hashToken(token);
+    const person = await c.get('repo').getSessionPerson(hash);
     if (!person) throw new ApiError(401);
+    if (c.get('oidc') && person.slack_team_id !== c.env.ALLOWED_SLACK_TEAM_ID) throw new ApiError(403);
     c.set('person', person);
-    c.set('sessionToken', token);
+    c.set('sessionHash', hash);
     await next();
   };
 
@@ -94,19 +94,42 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
     await next();
   };
 
+  async function issueSession(c, personId) {
+    const token = randomToken();
+    await c.get('repo').saveSession(await hashToken(token), personId, now().getTime() + SESSION_SECONDS * 1000);
+    setCookie(c, SESSION_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: SESSION_SECONDS });
+    return c.redirect('/', 302);
+  }
+
   app.get('/api/v1/auth/slack/login', async c => {
+    const repo = c.get('repo');
+    await repo.cleanupAuth();
+    if (c.get('oidc')) {
+      const state = randomToken();
+      const nonce = randomToken();
+      await repo.saveState(await hashToken(state), nonce, now().getTime() + STATE_SECONDS * 1000);
+      setCookie(c, STATE_COOKIE, state, { ...COOKIE_OPTIONS, maxAge: STATE_SECONDS });
+      return c.redirect(authorizationUrl(c.env, state, nonce), 302);
+    }
     const mockUser = c.req.query('mock_user') ?? 'accepted';
     if (!['accepted', 'pending'].includes(mockUser)) throw new ApiError(400);
     const personId = mockUser === 'pending' ? '00000000-0000-4000-8000-000000000002' : '00000000-0000-4000-8000-000000000001';
-    if (!await c.get('repo').getPerson(personId)) throw new ApiError(503);
-    const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
-    sessions.set(token, { personId, expiresAt: now().getTime() + SESSION_SECONDS * 1000 });
-    setCookie(c, SESSION_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: SESSION_SECONDS });
-    return c.redirect('/', 302);
+    if (!await repo.getPerson(personId)) throw new ApiError(503);
+    return issueSession(c, personId);
   });
 
-  // モックログインはloginで完結。OIDCコードの交換・セッション発行はしない。
-  app.get('/api/v1/auth/slack/callback', c => c.redirect('/', 302));
+  app.get('/api/v1/auth/slack/callback', async c => {
+    // ローカルモックはこれまでどおりloginだけで完結する。
+    if (!c.get('oidc')) return c.redirect('/', 302);
+    const state = c.req.query('state');
+    if (!state || !/^[0-9a-f]{64}$/.test(state) || getCookie(c, STATE_COOKIE) !== state) throw new ApiError(401);
+    setCookie(c, STATE_COOKIE, '', { ...COOKIE_OPTIONS, maxAge: 0 });
+    const consumed = await c.get('repo').consumeState(await hashToken(state));
+    if (!consumed || c.req.query('error') !== undefined || !c.req.query('code')) throw new ApiError(401);
+    const identity = await slack.authenticate(c.env, c.req.query('code'), consumed.nonce);
+    const person = await c.get('repo').upsertSlackPerson(identity);
+    return issueSession(c, person.id);
+  });
 
   app.get('/api/v1/me', requireUser, c => c.json(publicPerson(c.get('person'))));
 
@@ -120,8 +143,8 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
     return c.json(publicPerson(updated));
   });
 
-  app.post('/api/v1/auth/logout', requireUser, requireOrigin, c => {
-    sessions.delete(c.get('sessionToken'));
+  app.post('/api/v1/auth/logout', requireUser, requireOrigin, async c => {
+    await c.get('repo').deleteSession(c.get('sessionHash'));
     setCookie(c, SESSION_COOKIE, '', { ...COOKIE_OPTIONS, maxAge: 0 });
     return c.body(null, 204);
   });
@@ -129,11 +152,9 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
   app.post('/api/v1/posts/analyze', requireUser, requireOrigin, requireTerms, async c => {
     const body = await jsonObject(c);
     validateText(body.text);
-    // GM-004で全体のモード制限が変わっても、固定応答を公開しない。
-    if (c.env.ENV !== 'development') throw new ApiError(503);
     const apiKey = c.env.GEMINI_API_KEY;
     const model = c.env.GEMINI_MODEL;
-    if (!apiKey && !model) return c.json(analysis);
+    if (!apiKey && !model && !c.get('oidc')) return c.json(analysis);
     if (!apiKey || !model) throw new ApiError(503);
     const gemini = createGemini({ apiKey, model, fetch: fetchImpl });
     return c.json(await gemini.analyze({ text: body.text, places: await c.get('repo').listPlaces() }));
@@ -179,7 +200,7 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
 
   app.notFound(c => errorResponse(c, 404));
   // 例外メッセージやリクエスト本文はログにも応答にも含めない。
-  app.onError((error, c) => errorResponse(c, error instanceof ApiError || error instanceof GeminiError ? error.status : error instanceof DatabaseUnavailable ? 503 : 500));
+  app.onError((error, c) => errorResponse(c, error instanceof ApiError || error instanceof GeminiError || error instanceof AuthError ? error.status : error instanceof DatabaseUnavailable ? 503 : 500));
   return app;
 }
 

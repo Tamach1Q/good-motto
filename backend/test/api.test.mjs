@@ -59,7 +59,7 @@ async function expectError(response, status) {
 }
 
 for (const mode of [undefined, '', 'production', 'staging', 'Development']) {
-  test(`ENV=${String(mode)}: 全10 APIが503、Cookie・固定データを返さない`, async () => {
+  test(`ENV=${String(mode)}: OIDC必須設定なしでは全10 APIが503、Cookie・固定データを返さない`, async () => {
     const app = createApp();
     const { cookie } = await login(app);
     for (const [method, path] of ALL_APIS) {
@@ -448,7 +448,8 @@ test('アプリ再生成後も同意時刻・受信設定がD1に残り、再同
   const { cookie } = await login(app, 'pending');
   assert.equal((await request(app, '/me/preferences', { method: 'PATCH', cookie,
     body: { terms_accepted: true, feedback_opt_in: true } })).status, 200);
-  const restarted = createApp();
+  const restarted = createApp({ now: () => at });
+  assert.equal((await request(restarted, '/me', { cookie })).status, 200);
   const next = await login(restarted, 'pending');
   const me = await (await request(restarted, '/me', { cookie: next.cookie })).json();
   assert.equal(me.terms_accepted, true);
@@ -456,6 +457,18 @@ test('アプリ再生成後も同意時刻・受信設定がD1に残り、再同
   await request(restarted, '/me/preferences', { method: 'PATCH', cookie: next.cookie,
     body: { terms_accepted: true, feedback_opt_in: false } });
   assert.equal((await ENV.DB.prepare('SELECT terms_accepted_at FROM people WHERE id = ?').bind(MIDORI).first()).terms_accepted_at, at.getTime());
+});
+
+test('モックもD1にハッシュだけを保存し、期限境界で401になる', async () => {
+  const at = new Date('2026-11-04T04:00:00Z');
+  const app = createApp({ now: () => at, fetch: async () => assert.fail('開発モックはSlackに接続しない') });
+  const { cookie } = await login(app);
+  const token = cookie.split('=')[1];
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))), b => b.toString(16).padStart(2, '0')).join('');
+  const row = await ENV.DB.prepare('SELECT * FROM sessions').first();
+  assert.deepEqual(row, { token_hash: hash, person_id: AO, created_at: at.getTime(), expires_at: at.getTime() + 604800000 });
+  assert.equal(JSON.stringify(row).includes(token), false);
+  await expectError(await request(createApp({ now: () => new Date(at.getTime() + 604800000) }), '/me', { cookie }), 401);
 });
 
 test('D1未設定・未マイグレーション・テーブル破損・書込失敗は共通503、Cookieも本文ログもなし', async t => {
