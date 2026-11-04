@@ -27,7 +27,7 @@ npm run test:smoke --prefix backend
 | ローカル設定（`backend/.dev.vars`） | 用途 |
 | --- | --- |
 | `ENV=development` | 完全一致のときだけモックを許可 |
-| `ALLOWED_ORIGIN=http://localhost:5173` | 変更系APIで許可する単一のOrigin（ワイルドカード不可） |
+| `ALLOWED_ORIGIN=http://127.0.0.1:5173` | 変更系APIで許可する単一のOrigin（ワイルドカード不可） |
 | `M5_DEVICE_KEY=<自分で生成したローカル用キー>` | 件数取得だけに使う共通Bearerキー。既定値なし |
 
 `.dev.vars` はGit管理対象外です。コミットするWrangler設定には `ENV` を入れていません。Wranglerはローカル接続で起動し、このタスクではデプロイしません。
@@ -75,7 +75,7 @@ npm run test:smoke --prefix backend
 
 全モード共通でセッションはランダム256bit・期限7日、D1の `sessions` にSHA-256ハッシュだけを保存します。再起動・コード再読込後も同じCookieが有効です。メモリ保持だったGM-003から永続化したため、再起動による失効はしません。期限切れ・未知・人物が削除されたセッションは401、実OIDCモードで人物のチームと現在の許可チームが違えば403です。人物設定は毎回D1から読むため、別セッションにも即時反映します。ログアウトはD1の行とCookieを削除して204を返し、古いCookieは401になります。ログイン開始時に期限切れの `sessions` と `oauth_states` を削除し、Cronには依存しません。
 
-Cookieは `__Host-gm_session`、`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`、Domainなしです。ローカル用に属性を緩和する実装はありません。HTTPのループバックでSecure Cookieを受け付けるかはブラウザ依存のため、下記の実ブラウザ確認はGM-005で行います。拒否された場合はブラウザ・Cookie拒否理由を記録し、そのタスクで対処を検討してください。自動テストではログイン応答のCookieを使って `/me` の200を確認しています。
+Cookieは `__Host-gm_session`、`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`、Domainなしです。ローカル用に属性を緩和する実装はありません。HTTPループバックでのChromium検証結果は [結合・互換性検証](../docs/integration/README.md) を参照してください。他のブラウザは未検証です。自動テストではログイン応答のCookieを使って `/me` の200を確認しています。
 
 ## curl例
 
@@ -94,17 +94,17 @@ curl -i -H 'Cookie: __Host-gm_session=<セッショントークン>' \
   http://127.0.0.1:8787/api/v1/me
 
 curl -i -X PATCH -H 'Cookie: __Host-gm_session=<セッショントークン>' \
-  -H 'Origin: http://localhost:5173' -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:5173' -H 'Content-Type: application/json' \
   -d '{"terms_accepted":true,"feedback_opt_in":true}' \
   http://127.0.0.1:8787/api/v1/me/preferences
 
 curl -i -H 'Cookie: __Host-gm_session=<セッショントークン>' \
-  -H 'Origin: http://localhost:5173' -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:5173' -H 'Content-Type: application/json' \
   -d '{"text":"架空の共用キッチンを片付けてくれて助かった"}' \
   http://127.0.0.1:8787/api/v1/posts/analyze
 
 curl -i -H 'Cookie: __Host-gm_session=<セッショントークン>' \
-  -H 'Origin: http://localhost:5173' -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:5173' -H 'Content-Type: application/json' \
   -d '{"text":"架空の共用キッチンを片付けてくれて助かった","sentiment":"good","target_type":"place","target_id":"kitchen"}' \
   http://127.0.0.1:8787/api/v1/posts
 
@@ -119,25 +119,25 @@ curl -i -H 'Authorization: Bearer <.dev.varsのM5_DEVICE_KEY>' \
   http://127.0.0.1:8787/api/v1/places/laundry/counts
 
 curl -i -X POST -H 'Cookie: __Host-gm_session=<セッショントークン>' \
-  -H 'Origin: http://localhost:5173' \
+  -H 'Origin: http://127.0.0.1:5173' \
   http://127.0.0.1:8787/api/v1/auth/logout
 # 同じCookieで再度 /me を呼ぶと401
 ```
 
 Cookieなし/無効は401、未同意の投稿・許可外/欠落Originは403、不正入力は400、未存在の対象は404です。未定義パスは404、予期しない例外は500、無効なモード・必須設定欠落・D1未設定/未マイグレーション/失敗時は503で、すべて `{"error":{"code":"...","message":"..."}}` を返します。CORSは公開せず、ブラウザからは同一OriginのVite proxyを使います。変更系JSON APIもOrigin検証対象です。Viteの `changeOrigin` によるHostの変更は判定に使いません。
 
-## Web（PR #8）のVite経由確認手順（GM-005で実施）
+## Web（PR #8）のVite経由確認手順
 
 このPRでは `frontend/` を追加・変更せず、PR #8もマージしません。Webが利用できる結合環境で次を実施してください。
 
-1. 上記手順でAPIを起動し、`ALLOWED_ORIGIN=http://localhost:5173` にする。
-2. Webを `VITE_API_MODE=live npm run dev --prefix frontend -- --host localhost --port 5173 --strictPort` で起動する。`/api` のproxy先は `http://127.0.0.1:8787`、`changeOrigin: true`。Webのログイン先は同一Originの `/api/v1/auth/slack/login` を使う。
-3. `http://localhost:5173` を開き、未ログインの `/api/v1/me` が401になることを確認する。
-4. `http://localhost:5173/api/v1/auth/slack/login` からログインする。302でViteの `/` に戻り、`/me` が200、投稿画面へ進むことを確認する。Cookieの属性とブラウザの拒否理由も確認する。
-5. ログアウトし、`http://localhost:5173/api/v1/auth/slack/login?mock_user=pending` で未同意ユーザーへ切り替える。設定画面への分岐、利用同意後の投稿、受信設定の変更と撤回を確認する。
+1. 上記手順でAPIを起動し、`ALLOWED_ORIGIN=http://127.0.0.1:5173` にする。
+2. Webを `VITE_API_MODE=live VITE_POST_MAX_CHARACTERS=500 npm run dev --prefix frontend -- --port 5173 --strictPort` で起動する。`/api` のproxy先は `http://127.0.0.1:8787`、`changeOrigin: true`。Webのログイン先は同一Originの `/api/v1/auth/slack/login` を使う。
+3. `http://127.0.0.1:5173` を開き、未ログインの `/api/v1/me` が401になることを確認する。
+4. `http://127.0.0.1:5173/api/v1/auth/slack/login` からログインする。302でViteの `/` に戻り、`/me` が200、投稿画面へ進むことを確認する。Cookieの属性とブラウザの拒否理由も確認する。
+5. ログアウトし、`http://127.0.0.1:5173/api/v1/auth/slack/login?mock_user=pending` で未同意ユーザーへ切り替える。設定画面への分岐、利用同意後の投稿、受信設定の変更と撤回を確認する。
 6. 分析の固定結果、投稿201、候補「架空ソラ」、ログアウト後401を確認する。実サービスのユーザー・本文は入力しない。
 
-この手順は未実施です。実ブラウザ、PR #8との結合、実機確認はGM-005の範囲です。
+固定コミットを使ったGM-005の結果と残作業は [結合・互換性検証](../docs/integration/README.md) に記録しています。`frontend/` はこのブランチには含めません。再現は `npm run verify:branches --prefix backend` を使ってください。
 
 ## 実装済みの検証とモックの範囲
 
@@ -148,7 +148,7 @@ Cookieなし/無効は401、未同意の投稿・許可外/欠落Originは403、
 - 本文は両投稿APIでtrim後のUnicodeコードポイント数1〜500を検証します。絵文字1コードポイントは1文字です。バイト数上限は設けず、投稿本文をログへ出しません。
 - 同意済みの `terms_accepted:false` は400（利用同意の撤回は別途運用手順）。未同意のまま受信同意だけtrueにすると403です。
 - 件数は `target_type=place` の指定場所だけをSQLで集計します。今日（JST）を含む7暦日で、6日前の00:00 JST以上、集計時刻以下です。`updated_at` は集計時刻のUTC ISO 8601（末尾Z）です。投稿なしの既知の場所は0/0、不明な場所は404です。
-- Gemini分類・内部要約モジュールを実装しています。週次ジョブの組み込み・Cron・Slack送信・Web結合（GM-005）、デプロイ、自前のレート制限は含めません。Geminiの429はそのまま共通エラーの429へ対応させます。
+- Gemini分類・内部要約モジュールを実装しています。週次ジョブの本番組み込み・Cron・Slack送信、デプロイ、自前のレート制限は含めません。Geminiの429はそのまま共通エラーの429へ対応させます。
 
 API実装は `src/index.mjs` と `src/api/`・`src/auth/`、テストは `test/api.test.mjs`、`test/repository.test.mjs`、`test/gemini.test.mjs`、`test/oidc.test.mjs` に配置しています。Slack通信は全件fetchのモック、署名鍵はテスト実行時に生成し、並行callback/人物作成は実D1で検証します。Miniflare等の依存が必要なテストはすべて `.test.mjs` とし、GM-003のGeminiテストも拡張子を変更しました。PR #7の `src/jobs/`、`src/slack/` や既存テストとファイル名を分け、ルートの `.gitignore` / `.env.example` は使いません。`npm test --prefix backend` は `test/*.test.*` を実行するため、PR #7マージ後はそのテストも対象になります。既存の `node --test backend/test/*.test.js` も維持できる構成です。
 
@@ -229,3 +229,14 @@ const { summarize } = createGemini({
 30秒のタイムアウト（本文受信を含む）、429などのAPIエラー、安全性ブロック、不正JSON、型違いは詳細を含まない `GeminiError` を投げます。呼び出し側はこれを `summarize_failed` として扱えます。再試行・固定文章への切替・文字数の切り詰めはしません。400文字を超えた結果の保留・再実行・送信判定はPR #7の責務です。本文だけでも再識別リスクがあるため、実キーでの文章品質確認と週次側の匿名性検査が必要です。
 
 Gemini通信のテストは全件モックです。`node --test backend/test/gemini.test.mjs` をリポジトリ直下から実行すると、モード・最小化・出力検証・失敗・仮想時計による期限・保存とログへの漏洩防止を確認できます。PR #7の `node --test backend/test/*.test.js` とも共存します。RESTの形式は[Google公式のgenerateContent例](https://ai.google.dev/gemini-api/docs/migrate-to-interactions)を参照しています。実際のGeminiとの疎通・文章品質は未検証です。
+
+## 固定ブランチとの結合検証（GM-005）
+
+```sh
+npm run ci
+npm run verify:branches --prefix backend
+```
+
+`verify:branches` はCIには含めません。全体の上限は600秒、各外部コマンドは120秒です。5173/8787番ポートを空けて実行してください。Web `e605317` と週次 `9621483` をOSの一時領域へ取り出し、現在のAPIとローカルD1で検証します。作業ツリー、index、refsを変更せず、一時依存・Chromium・サーバー・D1を終了時に破棄します。初回のnpm/Chromium取得にはネットワークを使いますが、実Slack/Gemini/Cloudflareへの接続・ログイン・Secretは不要です。手元の `.dev.vars` は読みません。
+
+Webは元の `npm run dev`（`vite --host 127.0.0.1`）を使うため、ブラウザのOriginは `http://127.0.0.1:5173` です。旧設定の `localhost` では403になることも先に再現します。Originの完全一致は維持します。Chromiumを起動できない場合は元の `createHttpApi` をNodeから実サーバーへ向けます。この場合、画面操作とCookie受理は未検証と出力されます。画面テスト自体の失敗をNode代替で成功扱いにはしません。結果とPRマージ後の作業は [検証記録](../docs/integration/README.md) を参照してください。

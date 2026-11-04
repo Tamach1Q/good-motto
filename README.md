@@ -31,3 +31,7 @@ npm run dev --prefix backend
 - [GitHub運用ルール](CONTRIBUTING.md)
 - [Slack OpenID Connect 認証設計 v1（採用方式）](docs/auth/slack-oidc-v1.md)
 - [認証方式の比較資料](docs/auth/identity-options.md)
+
+## 結合・互換性検証（GM-005）
+
+`npm run ci` は他担当ブランチに依存しない統合テストも実行します。`npm run verify:branches --prefix backend` はPR #7・#8の固定コミットを一時領域に展開して実コードとの接続を確認します（CI対象外）。ヘッドレスChromium、ローカルD1、モックの外部通信を使い、実サービスのSecretは不要です。実行方法、検証結果と本番前の残作業は [結合・互換性検証](docs/integration/README.md) を参照してください。
