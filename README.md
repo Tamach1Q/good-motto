@@ -10,3 +10,8 @@
 - [API契約 v1（4人共通）](docs/api/contract-v1.md)
 
 
+
+## 共同開発
+
+- [GitHub運用ルール](CONTRIBUTING.md)
+- [認証と人物IDの設計候補](docs/auth/identity-options.md)
