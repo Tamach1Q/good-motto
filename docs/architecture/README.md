@@ -1,0 +1,139 @@
+# Good / Motto システム構成図（設計案 v1）
+
+作成日: 2026-11-04
+設計基準: C4 Model（Container diagram / Dynamic diagram） + データフロー図
+状態: 提案・未実装。技術スタックは現時点の候補として記述。
+
+
+## システム構成図（SVG）
+
+### C4 Container図
+
+![C4 Container図](./good_motto_c4_container.svg)
+
+### データフロー図
+
+![データフロー図](./good_motto_dataflow.svg)
+
+## 0. 図の読み方
+
+- 青: スマホ・M5Stackのクライアント
+- 緑: チームのサーバー側（Cloudflare Workers）
+- 黄: データベース（D1）
+- 紫: 外部API・外部サービス（OpenAI / Slack）
+- 矢印: ラベルの方向に通信または処理を依頼する（C4の表記法）
+- 点線: 投稿から日次・週次処理への論理的なデータ引き渡し
+- C4における **Container** は Docker コンテナのことではなく、独立して実行されるアプリケーションやデータストアを意味する。
+
+## 1. C4 Level 2 — Container diagram
+
+```mermaid
+flowchart LR
+  POSTER([投稿者])
+  RECIP([フィードバック受信者])
+  subgraph SYS["Good / Motto（チーム管理領域）"]
+    direction LR
+    subgraph CLIENT["クライアント"]
+      WEB["Webアプリ<br/>React / TypeScript / Vite<br/>入力・分類確認・投稿"]
+      M5["M5Stack端末<br/>Arduino C++ / M5Unified<br/>場所ごとの色・表情を表示"]
+    end
+    subgraph CF["Cloudflare"]
+      API["API / scheduled処理<br/>Workers + Hono<br/>HTTP API / バッチ"]
+      CRON["Cron Triggers<br/>日次・週次起動"]
+      DB[("D1 / SQL<br/>投稿・対象者・場所・集計結果")]
+    end
+  end
+  AI["OpenAI API<br/>分類・週次要約"]
+  SLACK["Slack Web API<br/>週次DMの送信"]
+
+  POSTER -->|入力・確認| WEB
+  WEB -->|"HTTPS / JSON<br/>POST /api/v1/posts/analyze<br/>POST /api/v1/posts"| API
+  M5 -->|"HTTPS / JSON<br/>GET /api/v1/places/{id}/mood<br/>5分ごと"| API
+  CRON -->|日次・週次イベント| API
+  API -->|D1 Binding / SQL| DB
+  API -->|HTTPS / AI分類・要約| AI
+  API -->|HTTPS / chat.postMessage| SLACK
+  SLACK -->|Slack DM| RECIP
+
+  classDef client fill:#dbeafe,stroke:#60a5fa,color:#0f172a;
+  classDef server fill:#dcfce7,stroke:#4ade80,color:#0f172a;
+  classDef store fill:#fef3c7,stroke:#f59e0b,color:#0f172a;
+  classDef ext fill:#f3e8ff,stroke:#c4b5fd,color:#0f172a;
+  class WEB,M5 client;
+  class API,CRON server;
+  class DB store;
+  class AI,SLACK ext;
+```
+
+- `Webアプリ` は利用者のスマホのブラウザ上で動く。静的ファイルは Cloudflare Workers Static Assets から配信する設計。
+- `API / scheduled処理` は同じ Workers プロジェクトで実装可能。Cron は WebからのHTTPとは別のイベントで発火。
+- `M5Stack` が自ら5分に1回状態を問い合わせる（ポーリング）。サーバー側から M5Stack に直接通信を始めるのではない。
+- `OpenAI API` と `Slack Web API` は管理対象外の外部サービス。トークンはサーバー側にだけ保持。
+
+## 2. Dynamic / Data Flow diagram
+
+```mermaid
+flowchart TB
+  subgraph A["A. 投稿フロー（利用者操作ごと）"]
+    A1["スマホ：文章入力"] --> A2["POST /api/v1/posts/analyze"]
+    A2 --> A3["バックエンド：AI分類（Good/Motto・対象）"]
+    A3 --> A4["スマホ：結果を確認・修正"]
+    A4 --> A5["POST /api/v1/posts"]
+    A5 --> DB[("D1：投稿・分類結果を保存")]
+  end
+  subgraph B["B. 場所フィードバック（日次集計 / 5分ごと取得）"]
+    B1["Cron：直近7日の場所別集計"] --> B2["Good率・公開可否判定"]
+    B2 --> B3[("D1：表示状態")]
+    B3 --> B4["M5Stack：GET /api/v1/places/{id}/mood"]
+    B4 --> B5["画面：緑 / 黄 / 赤 / グレー"]
+  end
+  subgraph C["C. 人物フィードバック（週1回）"]
+    C1["Cron：人物別の週次投稿抽出"] --> C2["同意・プライバシー条件をチェック"]
+    C2 --> C3["AIで配慮したブリーフを生成"]
+    C3 --> C4["Slack Web API：DM送信"]
+    C4 --> C5["対象本人が週次ブリーフを受信"]
+  end
+  DB -.->|場所対象の投稿| B1
+  DB -.->|人物対象の投稿| C1
+```
+
+## 3. API契約（3人で共有するインターフェース）
+
+| HTTPメソッドとパス | 呼び出し元 | 主なリクエスト | 主なレスポンス |
+| --- | --- | --- | --- |
+| `POST /api/v1/posts/analyze` | スマホ | `text` | `sentiment`, `target_type`, `target_id`, `target_label` |
+| `POST /api/v1/posts` | スマホ | `text`, `sentiment`, `target_type`, `target_id` | `post_id`, `status` |
+| `GET /api/v1/places` | スマホ | なし | `places[]` |
+| `GET /api/v1/places/{id}/mood` | M5Stack | 場所ID（URL） | `place_id`, `mood`, `color`, `updated_at` |
+
+人物検索・本人確認・認証の仕組みは追加で定義する必要がある。人を対象とする場合、AIが名前を抽出するだけでは本人と確定できないので、投稿前に対象者をユーザーが確認する。
+
+## 4. 実装と責任範囲
+
+| 担当 | コンポーネント | 実装内容 |
+| --- | --- | --- |
+| スマホ担当 | React SPA | 投稿フォーム、AI分析結果の確認・修正、POST呼び出し |
+| バックエンド担当 | Workers / Hono / D1 / 外部API | すべてのAPI、AI連携、DB、日次集計、週次Slack DM、権限確認 |
+| M5Stack担当 | Arduino / M5Unified | Wi-Fi接続、5分ごとのGET、状態の描画・通信失敗時の表示 |
+
+## 5. 未確定事項・運用時の安全要件
+
+1. **認証**：投稿者の識別方式、M5Stack用の読み取り専用認証を確定する。
+2. **人物マスタ**：`target_id` とSlackユーザーIDを安全に紐づける。
+3. **AI送信内容**：氏名等を含む原文を外部LLMへ送る場合、十分な説明・同意とデータ最小化を実施する。
+4. **プライバシー**：人物へのDMは本人同意と独立した投稿者数・特定可能性を確認。閾値を満たさない場合は通知しない。少人数でも匿名性の保証はできない。
+5. **場所表示**：投稿が少ない場合はグレー。件数や具体的内容を不必要に公開しない。
+6. **タイミング**：Cron Triggers はUTC。日本時間での実行時刻を明示して設定する。
+7. **例外処理**：APIエラー、Wi-Fi切断、AI分類失敗、Slack通知失敗時の再試行・表示を決める。
+8. **デバイス機種**：M5Stackの型番は未確定。表示処理は実機決定後に調整。
+
+## 6. 参考資料
+
+- C4 Model公式: https://c4model.com/
+- C4 Container diagram: https://c4model.com/diagrams/container
+- C4 Dynamic diagram: https://c4model.com/diagrams/dynamic
+- C4 Notation: https://c4model.com/diagrams/notation
+- Zenn「システム構成図の書き方」: https://zenn.dev/maman/articles/a797a98ac548e9
+- Cloudflare: https://developers.cloudflare.com/workers/vite-plugin/tutorial/
+- Cloudflare D1: https://developers.cloudflare.com/d1/worker-api/
+- Cloudflare Cron: https://developers.cloudflare.com/workers/configuration/cron-triggers/
