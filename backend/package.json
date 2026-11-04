@@ -10,7 +10,8 @@
     "test": "node --test test/*.test.*",
     "db:migrate": "wrangler d1 migrations apply DB --local",
     "db:seed": "wrangler d1 execute DB --local --file seeds/development.sql",
-    "test:smoke": "node test/smoke-local.mjs"
+    "test:smoke": "node test/smoke-local.mjs",
+    "verify:branches": "node scripts/verify-branches.mjs"
   },
   "dependencies": {
     "hono": "4.13.16",
