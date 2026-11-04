@@ -2,6 +2,19 @@
 
 日常の Good / Motto を記録し、場所の状態を M5Stack で可視化し、人物向けの週次フィードバックを Slack で届けるシステムの開発リポジトリです。
 
+## ローカルAPIモック（GM-001）
+
+Workers + Honoの10エンドポイントを、D1・Gemini・Slackなしで確認できます。Node.js 24を使用し、リポジトリ直下で次を実行してください。
+
+```sh
+npm run ci
+cp backend/.dev.vars.example backend/.dev.vars
+# backend/.dev.vars の M5_DEVICE_KEY をローカル専用のランダム値に置き換える
+npm run dev --prefix backend
+```
+
+ベースURLは `http://127.0.0.1:8787`。開発設定を明示したローカル環境だけで動作し、それ以外は503を返します。投稿は保存されません。設定、架空ユーザーの切替、curl例、Viteのliveモードでの結合確認手順、未実装の範囲は [backend/README.md](backend/README.md) を参照してください。
+
 ## システム設計
 
 - [システム構成図・設計案](docs/architecture/README.md)

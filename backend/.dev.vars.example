@@ -1,0 +1,3 @@
+ENV=development
+ALLOWED_ORIGIN=http://localhost:5173
+M5_DEVICE_KEY=replace-with-your-local-only-key
