@@ -9,4 +9,4 @@
 - [データフロー図（SVG）](docs/architecture/good_motto_dataflow.svg)
 - [API契約 v1（4人共通）](docs/api/contract-v1.md)
 
-現時点の図・技術構成は設計案であり、実装済みの機能を示すものではありません。
+
