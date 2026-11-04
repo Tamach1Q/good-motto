@@ -10,7 +10,7 @@
 <title>goodmotto_dataflow</title>
 <polygon fill="white" stroke="transparent" points="-30.24,30.24 -30.24,-982.24 629.24,-982.24 629.24,30.24 -30.24,30.24"/>
 <text text-anchor="middle" x="185.5" y="-936.8" font-family="Noto Sans CJK JP" font-size="14.00">Good / Motto &#160;| &#160;Data Flow Diagram</text>
-<text text-anchor="middle" x="185.5" y="-921.8" font-family="Noto Sans CJK JP" font-size="14.00">入力・分類・保存 → 日次の場所集計 → 週次の本人通知</text>
+<text text-anchor="middle" x="185.5" y="-921.8" font-family="Noto Sans CJK JP" font-size="14.00">入力・分類・保存 → 場所別件数取得 → 週次の本人通知</text>
 <g id="clust1" class="cluster">
 <title>cluster_post</title>
 <path fill="#eff6ff" stroke="#93c5fd" d="M299,-478.5C299,-478.5 502,-478.5 502,-478.5 508,-478.5 514,-484.5 514,-490.5 514,-490.5 514,-894 514,-894 514,-900 508,-906 502,-906 502,-906 299,-906 299,-906 293,-906 287,-900 287,-894 287,-894 287,-490.5 287,-490.5 287,-484.5 293,-478.5 299,-478.5"/>
@@ -19,7 +19,7 @@
 <g id="clust2" class="cluster">
 <title>cluster_place</title>
 <path fill="#ecfdf5" stroke="#6ee7b7" d="M20,-8C20,-8 370,-8 370,-8 376,-8 382,-14 382,-20 382,-20 382,-435.5 382,-435.5 382,-441.5 376,-447.5 370,-447.5 370,-447.5 20,-447.5 20,-447.5 14,-447.5 8,-441.5 8,-435.5 8,-435.5 8,-20 8,-20 8,-14 14,-8 20,-8"/>
-<text text-anchor="middle" x="195" y="-433.1" font-family="Noto Sans CJK JP" font-size="13.00">B &#160;場所へのフィードバック &#160;/ &#160;毎日集計・端末は5分ごとに取得</text>
+<text text-anchor="middle" x="195" y="-433.1" font-family="Noto Sans CJK JP" font-size="13.00">B &#160;場所へのフィードバック &#160;/ &#160;APIで件数集計・端末は5分ごとに取得</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_person</title>
@@ -149,34 +149,34 @@
 <g id="node6" class="node">
 <title>l1</title>
 <path fill="#d1fae5" stroke="#cbd5e1" stroke-width="1.2" d="M360.5,-417.5C360.5,-417.5 233.5,-417.5 233.5,-417.5 227.5,-417.5 221.5,-411.5 221.5,-405.5 221.5,-405.5 221.5,-381.5 221.5,-381.5 221.5,-375.5 227.5,-369.5 233.5,-369.5 233.5,-369.5 360.5,-369.5 360.5,-369.5 366.5,-369.5 372.5,-375.5 372.5,-381.5 372.5,-381.5 372.5,-405.5 372.5,-405.5 372.5,-411.5 366.5,-417.5 360.5,-417.5"/>
-<text text-anchor="middle" x="297" y="-396.7" font-family="Noto Sans CJK JP" font-size="11.00">Cron（日次）</text>
-<text text-anchor="middle" x="297" y="-384.7" font-family="Noto Sans CJK JP" font-size="11.00">直近7日間・場所別集計</text>
+<text text-anchor="middle" x="297" y="-396.7" font-family="Noto Sans CJK JP" font-size="11.00">API（件数集計）</text>
+<text text-anchor="middle" x="297" y="-384.7" font-family="Noto Sans CJK JP" font-size="11.00">D1から直近7日の投稿を取得</text>
 </g>
 <!-- l2 -->
 <g id="node7" class="node">
 <title>l2</title>
 <path fill="#d1fae5" stroke="#cbd5e1" stroke-width="1.2" d="M343.5,-326.5C343.5,-326.5 222.5,-326.5 222.5,-326.5 216.5,-326.5 210.5,-320.5 210.5,-314.5 210.5,-314.5 210.5,-290.5 210.5,-290.5 210.5,-284.5 216.5,-278.5 222.5,-278.5 222.5,-278.5 343.5,-278.5 343.5,-278.5 349.5,-278.5 355.5,-284.5 355.5,-290.5 355.5,-290.5 355.5,-314.5 355.5,-314.5 355.5,-320.5 349.5,-326.5 343.5,-326.5"/>
-<text text-anchor="middle" x="283" y="-305.7" font-family="Noto Sans CJK JP" font-size="11.00">公開可否・表示色決定</text>
-<text text-anchor="middle" x="283" y="-293.7" font-family="Noto Sans CJK JP" font-size="11.00">少数ならグレー</text>
+<text text-anchor="middle" x="283" y="-305.7" font-family="Noto Sans CJK JP" font-size="11.00">Good/Motto件数をSQL集計</text>
+<text text-anchor="middle" x="283" y="-293.7" font-family="Noto Sans CJK JP" font-size="11.00">割合・色は端末側で計算</text>
 </g>
 <!-- l3 -->
 <g id="node8" class="node">
 <title>l3</title>
 <path fill="#fef3c7" stroke="#fbbf24" stroke-width="1.2" d="M362,-230.8C362,-233.26 323.9,-235.25 277,-235.25 230.1,-235.25 192,-233.26 192,-230.8 192,-230.8 192,-190.7 192,-190.7 192,-188.24 230.1,-186.25 277,-186.25 323.9,-186.25 362,-188.24 362,-190.7 362,-190.7 362,-230.8 362,-230.8"/>
 <path fill="none" stroke="#fbbf24" stroke-width="1.2" d="M362,-230.8C362,-228.34 323.9,-226.34 277,-226.34 230.1,-226.34 192,-228.34 192,-230.8"/>
-<text text-anchor="middle" x="277" y="-207.95" font-family="Noto Sans CJK JP" font-size="11.00">D1：場所別表示状態を保存</text>
+<text text-anchor="middle" x="277" y="-207.95" font-family="Noto Sans CJK JP" font-size="11.00">API：件数JSONを返す</text>
 </g>
 <!-- l4 -->
 <g id="node9" class="node">
 <title>l4</title>
 <path fill="#d1fae5" stroke="#cbd5e1" stroke-width="1.2" d="M362.5,-137C362.5,-137 183.5,-137 183.5,-137 177.5,-137 171.5,-131 171.5,-125 171.5,-125 171.5,-113 171.5,-113 171.5,-107 177.5,-101 183.5,-101 183.5,-101 362.5,-101 362.5,-101 368.5,-101 374.5,-107 374.5,-113 374.5,-113 374.5,-125 374.5,-125 374.5,-131 368.5,-137 362.5,-137"/>
-<text text-anchor="middle" x="273" y="-116.2" font-family="Noto Sans CJK JP" font-size="11.00">M5Stack：GET /places/{id}/mood</text>
+<text text-anchor="middle" x="273" y="-116.2" font-family="Noto Sans CJK JP" font-size="11.00">M5Stack：GET /places/{id}/counts</text>
 </g>
 <!-- l5 -->
 <g id="node10" class="node">
 <title>l5</title>
 <path fill="#d1fae5" stroke="#cbd5e1" stroke-width="1.2" d="M350.5,-52C350.5,-52 195.5,-52 195.5,-52 189.5,-52 183.5,-46 183.5,-40 183.5,-40 183.5,-28 183.5,-28 183.5,-22 189.5,-16 195.5,-16 195.5,-16 350.5,-16 350.5,-16 356.5,-16 362.5,-22 362.5,-28 362.5,-28 362.5,-40 362.5,-40 362.5,-46 356.5,-52 350.5,-52"/>
-<text text-anchor="middle" x="273" y="-31.2" font-family="Noto Sans CJK JP" font-size="11.00">画面を緑・黄・赤・灰に更新</text>
+<text text-anchor="middle" x="273" y="-31.2" font-family="Noto Sans CJK JP" font-size="11.00">割合計算→色表示（少数は灰）</text>
 </g>
 <!-- h1 -->
 <g id="node11" class="node">
