@@ -1,6 +1,6 @@
 # Good/Motto — API契約 v1（4人開発用）
 
-状態: 設計案 / 実装未完了。全担当はこの入出力を共通仕様とする。
+状態: API仕様の決定版 v1 / 実装未完了。全担当はこの入出力を共通仕様とする。Slackログイン方式の実装仕様は [Slack OIDC 認証設計](../auth/slack-oidc-v1.md) に従う。
 
 ## 技術スタック
 
@@ -9,14 +9,44 @@
 - AI: **Gemini API**（モデルIDは `GEMINI_MODEL` で管理し、無料枠対象モデルを選ぶ）
 - M5Stack: Arduino C++ + M5Unified
 - Slack通知: Cloudflare Cron Triggers / Slack Web API
+- 認証: Slack OpenID Connect + D1セッション + HttpOnly Cookie（学校ワークスペース限定）
 
 通信は HTTPS、データは UTF-8 / JSON。APIのプレフィックスは `/api/v1`。
+
+## 認証・本人設定用のAPI（追加決定）
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/auth/slack/login` | Slackログイン開始（302） |
+| GET | `/api/v1/auth/slack/callback` | 認可コード検証・セッション発行・画面に戻す（302） |
+| GET | `/api/v1/me` | ログインした本人のID・同意状態 |
+| PATCH | `/api/v1/me/preferences` | 自分の利用同意とDM受信設定を更新 |
+| POST | `/api/v1/auth/logout` | ログアウト・セッション失効 |
+
+- Slack OIDC scopeは `openid profile`（メールは取得しない）。ユーザーの本人確認はSlack公式の署名済みIDトークン、許可ワークスペースID、D1セッションで行う。
+- セッションはサーバー発行の `__Host-gm_session`（HttpOnly; Secure; SameSite=Lax）を使う。フロントはアクセストークンを保存・送信しない。
+- Cookie認証の変更系HTTPメソッドにはCSRF/Origin検証を適用し、Web/ユーザーAPIは同一オリジンからアクセスする。
+- 人物検索は同意済みの対象者だけ。M5Stackはユーザーセッションでなく専用読み取り資格情報を使う。
+
+`GET /api/v1/me` (200):
+
+```json
+{"person_id":"00000000-0000-4000-8000-000000000001","display_name":"田中","terms_accepted":true,"feedback_opt_in":false}
+```
+
+`PATCH /api/v1/me/preferences` request:
+
+```json
+{"terms_accepted":true,"feedback_opt_in":true}
+```
+
+Responseは`GET /api/v1/me`と同型。`feedback_opt_in`は初期false・いつでも撤回可能。投稿APIはログインと利用同意が必要。
 
 ## エンドポイント
 
 ### 1. `POST /api/v1/posts/analyze`
 
-ユーザーが入力した自由記述をGeminiで分類する。結果は**提案**でありユーザーが修正できる。
+ユーザーが入力した自由記述をGeminiで分類する。結果は**提案**でありユーザーが修正できる。ログイン済みかつ利用同意済みのユーザーのみ呼び出せる。
 
 Request:
 
@@ -51,7 +81,7 @@ Response (201):
 {"post_id":"post_001","status":"created"}
 ```
 
-投稿者IDと投稿日時はサーバー側で設定する。未認証投稿は禁止。対象IDと種類の組み合わせを検証する。
+投稿者IDと投稿日時は**セッション内の本人IDからサーバー側で決定**する。未認証投稿は禁止。`target_type=person` のときは、相手がDM受信・フィードバック対象になることに同意済みかをサーバー側で検証する。対象IDと種類の組み合わせを検証する。
 
 ### 3. `GET /api/v1/places`
 
@@ -63,7 +93,7 @@ Response (200):
 
 ### 4. `GET /api/v1/people?query=田中`
 
-本人確認用の人物候補検索。検索結果はログインユーザーに許可された候補に限定。
+本人確認用の人物候補検索。検索結果は同じワークスペース内の、本人がフィードバック対象となることに同意した人物に限定。
 
 Response (200):
 
@@ -123,7 +153,8 @@ HTTP APIとして外部公開せず、バックエンドのスケジュール実
 ```
 
 - `400`: 不正な入力
-- `401/403`: 認証・権限エラー
+- `401`: 未ログイン・セッション無効
+- `403`: 許可外ワークスペース、利用未同意、対象者の未同意、権限エラー
 - `404`: 対象なし
 - `429`: 回数制限
 - `500/503`: サーバーまたは外部APIでの失敗
@@ -132,6 +163,6 @@ HTTP APIとして外部公開せず、バックエンドのスケジュール実
 
 - `GEMINI_API_KEY`、`SLACK_BOT_TOKEN`、デバイスキーは**サーバー/端末のシークレット設定**で管理し、Gitにコミットしない。
 - Gemini無料枠はレート制限があり、公式案内では無料枠の送信データがサービス改善に使われる場合がある。人物への不満等のセンシティブな原文を外部送信する前に同意と匿名化・データ最小化を検討する。
-- 認証、投稿者識別、ユーザーとSlack IDの対応付けはバックエンド担当とSlack担当の共通課題。最初に契約を合意する。
+- **認証仕様は確定**: [Slack OIDC 認証設計](../auth/slack-oidc-v1.md)。Issue #4がログイン・投稿者ID・人物DBを実装し、Issue #2がBot TokenでDMを送信する。
 
 参考: https://ai.google.dev/gemini-api/docs/pricing
