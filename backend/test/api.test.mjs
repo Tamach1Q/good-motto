@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
+import { createD1, resetD1, addPost, AO, MIDORI, SORA } from './helpers/d1.mjs';
 import { createApp } from '../src/index.mjs';
 
 // すべて架空。実Secret・外部通信・Cloudflareアカウントは不要。
 const ENV = { ENV: 'development', ALLOWED_ORIGIN: 'http://localhost:5173', M5_DEVICE_KEY: 'test-only-device-key' };
+let disposeD1;
+before(async () => { ENV.DB = await createD1({ after: fn => { disposeD1 = fn; } }); });
+after(async () => { await disposeD1?.(); });
+beforeEach(async () => { await resetD1(ENV.DB); });
 const PREFIX = '/api/v1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CODES = { 400: 'INVALID_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 500: 'INTERNAL_ERROR', 503: 'SERVICE_UNAVAILABLE' };
@@ -325,8 +330,8 @@ test('countsは専用Bearerのみ、キー未設定・不一致・Cookieのみ�
   await expectError(await request(app, '/places/kitchen/counts', { env: { ...ENV, M5_DEVICE_KEY: '' }, headers: { Authorization: 'Bearer ' } }), 401);
 });
 
-test('countsのキーは5つのみ、厨房8/12、洗濯室5件未満、不明場所404', async () => {
-  const app = createApp();
+test('countsのキーは5つのみ、投稿がない既知の場所は0、不明場所404', async () => {
+  const app = createApp({ now: () => new Date('2026-11-04T04:00:00Z') });
   const headers = { Authorization: `Bearer ${ENV.M5_DEVICE_KEY}` };
   for (const place of ['kitchen', 'laundry']) {
     const response = await request(app, `/places/${place}/counts`, { headers });
@@ -338,8 +343,7 @@ test('countsのキーは5つのみ、厨房8/12、洗濯室5件未満、不明�
     assert.ok(Number.isInteger(body.good_count) && body.good_count >= 0);
     assert.ok(Number.isInteger(body.motto_count) && body.motto_count >= 0);
     assert.ok(Number.isFinite(Date.parse(body.updated_at)));
-    if (place === 'kitchen') assert.deepEqual(body, { place_id: 'kitchen', period_days: 7, good_count: 8, motto_count: 12, updated_at: '2026-11-04T04:00:00Z' });
-    else assert.ok(body.good_count + body.motto_count < 5);
+    assert.deepEqual(body, { place_id: place, period_days: 7, good_count: 0, motto_count: 0, updated_at: '2026-11-04T04:00:00.000Z' });
   }
   for (const id of ['missing', '__proto__', 'constructor']) await expectError(await request(app, `/places/${id}/counts`, { headers }), 404);
 });
@@ -369,5 +373,115 @@ test('未定義パスは共通404、予期しない例外は詳細を隠した�
   await expectError(await request(app, '/posts', { method: 'POST', cookie, body: { ...POST, text: secretText, sentiment: 'invalid' } }), 400);
   const error = await expectError(await request(app, '/test-error', { method: 'POST', body: { text: secretText } }), 500);
   assert.ok(!JSON.stringify(error).includes(secretText));
+  assert.ok(logs.every(log => log.mock.calls.length === 0));
+});
+
+for (const at of ['2026-11-04T00:30:00Z', '2026-11-03T15:30:00Z']) {
+  test(`JSTの7暦日集計と上下限、場所・人物・sentiment混在: ${at}`, async () => {
+    const app = createApp({ now: () => new Date(at) });
+    // UTC日付が異なっても、どちらもJST 11/4。下限は10/29 00:00 JST。
+    for (const [id, time, type, target, sentiment] of [
+      ['lower', '2026-10-28T15:00:00Z', 'place', 'kitchen', 'good'],
+      ['before', '2026-10-28T14:59:59Z', 'place', 'kitchen', 'good'],
+      ['motto', '2026-11-03T14:00:00Z', 'place', 'kitchen', 'motto'],
+      ['upper', at, 'place', 'kitchen', 'good'],
+      ['future', new Date(Date.parse(at) + 1), 'place', 'kitchen', 'motto'],
+      ['laundry', at, 'place', 'laundry', 'motto'],
+      ['person', at, 'person', 'kitchen', 'good'],
+    ]) await addPost(ENV.DB, { id, at: time, type, target, sentiment });
+    const headers = { Authorization: `Bearer ${ENV.M5_DEVICE_KEY}` };
+    const response = await request(app, '/places/kitchen/counts', { headers });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { place_id: 'kitchen', period_days: 7,
+      good_count: 2, motto_count: 1, updated_at: new Date(at).toISOString() });
+    const laundry = await (await request(app, '/places/laundry/counts', { headers })).json();
+    assert.equal(laundry.good_count, 0);
+    assert.equal(laundry.motto_count, 1);
+  });
+}
+
+test('投稿ID・本人・サーバー時刻・trim後の本文がD1に保存され、検証失敗は行を増やさない', async () => {
+  const at = new Date('2026-11-04T04:01:02.345Z');
+  const app = createApp({ now: () => at });
+  const { cookie } = await login(app);
+  const response = await request(app, '/posts', { method: 'POST', cookie, body: { ...POST, text: ' \n架空の本文　\t' } });
+  const { post_id } = await response.json();
+  assert.equal(response.status, 201);
+  assert.deepEqual(await ENV.DB.prepare('SELECT * FROM posts').first(), {
+    id: post_id, author_person_id: AO, target_type: 'place', target_id: 'kitchen', sentiment: 'good',
+    text: '架空の本文', created_at: at.toISOString(),
+  });
+  for (const change of [{ text: ' ' }, { sentiment: 'bad' }, { target_type: 'unknown' },
+    { target_id: 'missing' }, { author_person_id: SORA }, { created_at: at.toISOString() },
+    { target_type: 'person', target_id: MIDORI }]) {
+    assert.ok((await request(app, '/posts', { method: 'POST', cookie, body: { ...POST, ...change } })).status >= 400);
+  }
+  assert.equal((await ENV.DB.prepare('SELECT COUNT(*) AS n FROM posts').first()).n, 1);
+});
+
+test('検索は同一teamの同意者のみ、%・_・\\・SQL文字を文字どおりに扱う', async () => {
+  const app = createApp();
+  const { cookie } = await login(app);
+  await ENV.DB.prepare('UPDATE people SET display_name = ? WHERE id = ?').bind("架空%_\\'ソラ", SORA).run();
+  await ENV.DB.prepare(`INSERT INTO people (id, slack_team_id, slack_user_id, display_name, terms_accepted_at, feedback_opt_in, created_at)
+    VALUES ('fake-other', 'FAKE_OTHER_TEAM', 'FAKE_OTHER_USER', '架空%_ソラ', 1, 1, 1)`).run();
+  for (const query of ['%', '_', '\\', "'", "架空%_\\'ソラ"]) {
+    assert.deepEqual(await (await request(app, `/people?query=${encodeURIComponent(query)}`, { cookie })).json(),
+      { people: [{ id: SORA, name: "架空%_\\'ソラ" }] });
+  }
+  assert.deepEqual(await (await request(app, `/people?query=${encodeURIComponent("' OR 1=1 --")}`, { cookie })).json(), { people: [] });
+});
+
+test('対象者の同意撤回をD1から再確認し、以後の投稿を保存しない', async () => {
+  const app = createApp();
+  const { cookie } = await login(app);
+  const body = { ...POST, target_type: 'person', target_id: SORA };
+  assert.equal((await request(app, '/posts', { method: 'POST', cookie, body })).status, 201);
+  await ENV.DB.prepare('UPDATE people SET feedback_opt_in = 0 WHERE id = ?').bind(SORA).run();
+  await expectError(await request(app, '/posts', { method: 'POST', cookie, body }), 403);
+  assert.equal((await ENV.DB.prepare('SELECT COUNT(*) AS n FROM posts').first()).n, 1);
+});
+
+test('アプリ再生成後も同意時刻・受信設定がD1に残り、再同意で時刻を上書きしない', async () => {
+  const at = new Date('2026-11-04T04:01:02.345Z');
+  const app = createApp({ now: () => at });
+  const { cookie } = await login(app, 'pending');
+  assert.equal((await request(app, '/me/preferences', { method: 'PATCH', cookie,
+    body: { terms_accepted: true, feedback_opt_in: true } })).status, 200);
+  const restarted = createApp();
+  const next = await login(restarted, 'pending');
+  const me = await (await request(restarted, '/me', { cookie: next.cookie })).json();
+  assert.equal(me.terms_accepted, true);
+  assert.equal(me.feedback_opt_in, true);
+  await request(restarted, '/me/preferences', { method: 'PATCH', cookie: next.cookie,
+    body: { terms_accepted: true, feedback_opt_in: false } });
+  assert.equal((await ENV.DB.prepare('SELECT terms_accepted_at FROM people WHERE id = ?').bind(MIDORI).first()).terms_accepted_at, at.getTime());
+});
+
+test('D1未設定・未マイグレーション・テーブル破損・書込失敗は共通503、Cookieも本文ログもなし', async t => {
+  const app = createApp();
+  const { cookie } = await login(app);
+  const unseeded = await createD1(t, { seed: false });
+  const noSeedLogin = await request(app, '/auth/slack/login', { env: { ...ENV, DB: unseeded } });
+  await expectError(noSeedLogin, 503);
+  assert.equal(noSeedLogin.headers.get('Set-Cookie'), null);
+  const blank = await createD1(t, { migrate: false });
+  const logs = ['log', 'info', 'warn', 'error', 'debug'].map(method => t.mock.method(console, method, () => {}));
+  for (const DB of [undefined, blank]) {
+    for (const [method, path] of ALL_APIS) {
+      const response = await request(app, path, { method, cookie, env: { ...ENV, DB }, body: method === 'GET' ? undefined : POST,
+        headers: { Authorization: `Bearer ${ENV.M5_DEVICE_KEY}` } });
+      await expectError(response, 503);
+      assert.equal(response.headers.get('Set-Cookie'), null);
+    }
+  }
+  // 実D1のトリガーで書込エラーを発生させる。SQLのモックは使わない。
+  await ENV.DB.prepare(`CREATE TRIGGER reject_posts BEFORE INSERT ON posts BEGIN
+    SELECT RAISE(ABORT, '架空の非公開本文'); END`).run();
+  await expectError(await request(app, '/posts', { method: 'POST', cookie, body: POST }), 503);
+  assert.equal((await ENV.DB.prepare('SELECT COUNT(*) AS n FROM posts').first()).n, 0);
+  await ENV.DB.prepare('DROP TRIGGER reject_posts').run();
+  await ENV.DB.prepare('DROP TABLE posts').run();
+  await expectError(await request(app, '/places/kitchen/counts', { headers: { Authorization: `Bearer ${ENV.M5_DEVICE_KEY}` } }), 503);
   assert.ok(logs.every(log => log.mock.calls.length === 0));
 });
