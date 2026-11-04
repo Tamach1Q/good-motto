@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { analysis } from './api/mock-data.mjs';
 import { createRepository, DatabaseUnavailable } from './data/repository.mjs';
+import { createGemini, GeminiError } from './ai/gemini.mjs';
 
 const SESSION_COOKIE = '__Host-gm_session';
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
@@ -11,6 +12,7 @@ const ERRORS = {
   401: ['UNAUTHORIZED', '有効な認証情報が必要です'],
   403: ['FORBIDDEN', 'この操作は許可されていません'],
   404: ['NOT_FOUND', '対象が見つかりません'],
+  429: ['RATE_LIMITED', '時間をおいてお試しください'],
   500: ['INTERNAL_ERROR', '処理に失敗しました'],
   503: ['SERVICE_UNAVAILABLE', 'サービスを利用できません'],
 };
@@ -50,7 +52,7 @@ function publicPerson(person) {
     terms_accepted: person.terms_accepted_at !== null, feedback_opt_in: person.feedback_opt_in === 1 };
 }
 
-export function createApp({ now = () => new Date() } = {}) {
+export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThis.fetch } = {}) {
   const app = new Hono();
   const sessions = new Map();
 
@@ -127,7 +129,14 @@ export function createApp({ now = () => new Date() } = {}) {
   app.post('/api/v1/posts/analyze', requireUser, requireOrigin, requireTerms, async c => {
     const body = await jsonObject(c);
     validateText(body.text);
-    return c.json(analysis);
+    // GM-004で全体のモード制限が変わっても、固定応答を公開しない。
+    if (c.env.ENV !== 'development') throw new ApiError(503);
+    const apiKey = c.env.GEMINI_API_KEY;
+    const model = c.env.GEMINI_MODEL;
+    if (!apiKey && !model) return c.json(analysis);
+    if (!apiKey || !model) throw new ApiError(503);
+    const gemini = createGemini({ apiKey, model, fetch: fetchImpl });
+    return c.json(await gemini.analyze({ text: body.text, places: await c.get('repo').listPlaces() }));
   });
 
   app.post('/api/v1/posts', requireUser, requireOrigin, requireTerms, async c => {
@@ -170,7 +179,7 @@ export function createApp({ now = () => new Date() } = {}) {
 
   app.notFound(c => errorResponse(c, 404));
   // 例外メッセージやリクエスト本文はログにも応答にも含めない。
-  app.onError((error, c) => errorResponse(c, error instanceof ApiError ? error.status : error instanceof DatabaseUnavailable ? 503 : 500));
+  app.onError((error, c) => errorResponse(c, error instanceof ApiError || error instanceof GeminiError ? error.status : error instanceof DatabaseUnavailable ? 503 : 500));
   return app;
 }
 
