@@ -35,10 +35,27 @@ Chromiumの取得・起動ができない環境では、固定Webの `createHttp
 | 週次のガード・冪等性 | 同上 | 投稿者3人ならdry-run本文生成、2人なら保留、未同意/別チームskip。400文字許可、401文字/数字/引用符は保留。本実行は偽deliver1回、同週再実行はalready_sent。撤回後no_consent | 成功 | 匿名性の保証や実データでの要約品質は評価していない |
 | scheduled組み込み例 | 同上 | `{ fetch: app.fetch, scheduled: scheduledWeeklyDigest }` のfetchとscheduled呼び出し | fetchは動作。D1ありでは警告を出してskip | PR #7側の入口はD1 repo/要約が未接続。今回変更せず、マージ後に実装が必要 |
 | マージ見通し | 基準ブランチ対各固定コミット | 3引数の読み取り専用git merge-tree | PR #7はREADME.mdだけ衝突、PR #8は衝突なし | マージ順・今後の変更で変化する。実マージは行っていない |
-| GitHub Actions | 本PR | 新しいチェックアウトでnpm run ci | 初回PR実行は既存Geminiログ検査で503（200期待）が1件発生。同一コミットのpush実行とローカル全201件・Gemini単独82件は成功 | [初回実行](https://github.com/Tamach1Q/good-motto/actions/runs/41794721204)。原因未特定の間欠的失敗として記録。既存テストを弱めず再実行で確認 |
+| GitHub Actions | 本PR | 新しいチェックアウトでnpm run ci | 初回PR実行は既存Geminiログ検査で503（200期待）が1件発生。同一コミットのpush実行とローカル全201件・Gemini単独82件は成功 | [初回実行](https://github.com/Tamach1Q/good-motto/actions/runs/41794721204)。下記「CIの間欠的な失敗」を参照 |
 | 実サービス | — | 実Slack/Gemini/Cloudflare、M5Stack実機 | **未検証** | 接続、Secret使用、デプロイ、DM送信は実施していない |
 
 `npm run ci` は201件すべて成功しました（新規3件、既存198件）。`verify:branches` も終了コード0で完了し、一時ファイルとサーバーの破棄、実行前後の作業ツリー状態・全refsの一致を確認しました。Webの初回実行では204の本文取得を要求した検証側の不具合があり、修正後の再実行で全経路が成功しました。アプリの既存テストは変更・弱体化していません。
+
+PRの先頭コミット `c7f7b16` で `verify:branches` を別途再実行し、同じ結果を確認しました。
+
+### CIの間欠的な失敗
+
+`backend/test/gemini.test.mjs` は、負荷が高いときに `HeadersTimeoutError` で失敗することがあります。D1が503を返すので、ログインや投稿の失敗に見えます。
+
+同じ負荷（8並列×6回）で比べました。
+
+| 条件 | 失敗 |
+| --- | --- |
+| `t.mock.timers` で時計を進めるテストを含む | 7/48 |
+| そのテストを除外 | 0/48 |
+
+失敗はすべて、最初のタイマーテスト以降で起きています。テストでだけ使うMiniflareのD1プロキシの通信が、偽の時計の影響を受けていると考えられます。undici内部の仕組みまでは確認していません。本番コードは `mock.timers` もこのプロキシも使わないので、本番には影響しません。
+
+未修正です。`backend/test/oidc.test.mjs` も `t.mock.timers` を使っているので、同じ失敗が起きる可能性があります。CIが失敗してこの症状なら、再実行で確認してください。
 
 ## PR #8マージ後の作業
 
