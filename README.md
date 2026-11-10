@@ -11,6 +11,13 @@
 
 
 
+## 開発ブランチとPull Request
+
+- 通常の開発PRは **`develop` 宛（base: `develop`）** に作成してください。**`main` 宛に作成しないでください。**
+- 担当者・AIエージェントは各機能ブランチ（head）で作業し、`main` / `develop` に直接pushしません。
+- PRを作っても自動ではマージしません。レビューとCI確認後にチームでマージを判断します。
+- 作業前に [CONTRIBUTING.md](CONTRIBUTING.md) を必ず読んでください。
+
 ## 共同開発
 
 - [GitHub運用ルール](CONTRIBUTING.md)
