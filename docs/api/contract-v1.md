@@ -42,6 +42,8 @@
 
 Responseは`GET /api/v1/me`と同型。`feedback_opt_in`は初期false・いつでも撤回可能。投稿APIはログインと利用同意が必要。
 
+`POST /api/v1/auth/logout` は成功時に `204`（本文なし）を返す。
+
 ## エンドポイント
 
 ### 1. `POST /api/v1/posts/analyze`
@@ -53,6 +55,8 @@ Request:
 ```json
 {"text":"共用キッチンが汚くてイライラした"}
 ```
+
+`text` は `POST /api/v1/posts` と共通で、trim後のUnicodeコードポイント数が1〜500。範囲外は `400`。バイト数の上限は設けない。
 
 Response (200):
 
@@ -81,7 +85,7 @@ Response (201):
 {"post_id":"post_001","status":"created"}
 ```
 
-投稿者IDと投稿日時は**セッション内の本人IDからサーバー側で決定**する。未認証投稿は禁止。`target_type=person` のときは、相手がDM受信・フィードバック対象になることに同意済みかをサーバー側で検証する。対象IDと種類の組み合わせを検証する。
+投稿者IDと投稿日時は**セッション内の本人IDからサーバー側で決定**する。未認証投稿は禁止。`target_type=person` のときは、相手がDM受信・フィードバック対象になることに同意済みかをサーバー側で検証する。対象IDと種類の組み合わせを検証する。`target_type` は `person | place` のみ受け付け、`unknown` や `target_id:null` は `400`。
 
 ### 3. `GET /api/v1/places`
 
@@ -98,7 +102,7 @@ Response (200):
 Response (200):
 
 ```json
-{"people":[{"id":"person_001","name":"田中さん"}]}
+{"people":[{"id":"00000000-0000-4000-8000-000000000001","name":"田中さん"}]}
 ```
 
 ### 5. `GET /api/v1/places/{id}/counts`
@@ -114,7 +118,7 @@ Response (200):
 - 対象は `target_type=place` かつ指定 `place_id` の投稿のみ。
 - `good_count` / `motto_count` は 0 以上の整数。直近7日間（日本時間基準）の件数。
 - 投稿テキスト・人物情報・投稿者情報をM5Stackへ返さない。
-- 端末専用の読み取り権限で取得する（認証方式・鍵配布はバックエンド担当が確定）。
+- 端末は `Authorization: Bearer <デバイスキー>` を送る。キーは全端末共通の読み取り専用で、サーバー側はWorker Secretで管理する。なし・不一致は `401`。ユーザーセッションでは取得できず、このキーで他のAPIは呼べない。
 - MVPはAPIがD1から件数をSQL集計して返す。場所の日次バッチは必須ではない。
 
 ## M5Stackの表示計算（端末担当）
@@ -152,12 +156,12 @@ HTTP APIとして外部公開せず、バックエンドのスケジュール実
 {"error":{"code":"INVALID_REQUEST","message":"入力を確認してください"}}
 ```
 
-- `400`: 不正な入力
-- `401`: 未ログイン・セッション無効
-- `403`: 許可外ワークスペース、利用未同意、対象者の未同意、権限エラー
-- `404`: 対象なし
-- `429`: 回数制限
-- `500/503`: サーバーまたは外部APIでの失敗
+- `400` `INVALID_REQUEST`: 不正な入力
+- `401` `UNAUTHORIZED`: 未ログイン・セッション無効・デバイスキー不正
+- `403` `FORBIDDEN`: 許可外ワークスペース、利用未同意、対象者の未同意、権限エラー
+- `404` `NOT_FOUND`: 対象なし
+- `429` `RATE_LIMITED`: 回数制限
+- `500` `INTERNAL_ERROR` / `503` `SERVICE_UNAVAILABLE`: サーバーまたは外部APIでの失敗
 
 ## 機密情報・利用上の注意
 
