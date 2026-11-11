@@ -1,0 +1,17 @@
+.DS_Store
+output/
+tmp/
+
+# Local device and network secrets
+**/secrets.h
+**/wifi_credentials.h
+**/*.local.h
+*.env
+.env.*
+!.env.example
+
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.map
