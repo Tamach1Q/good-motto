@@ -57,9 +57,9 @@
 
 ### 投稿上限
 
-Issue #4とAPI契約に具体的な文字数・バイト数はまだありません。独自の5,000文字制限は撤去し、`src/textValidation.ts` を分析・投稿の共通検証にしました。合意した値を `VITE_POST_MAX_CHARACTERS` / `VITE_POST_MAX_BYTES` に設定できます。未設定ならフロントでは推測した上限を設けず、空白のみの拒否とサーバーエラー処理を行います。
+本文は trim 後の Unicode コードポイント数で最大500文字。ステージングは `VITE_API_MODE=live VITE_POST_MAX_CHARACTERS=500 npm run build`。実APIでの結合確認は統合担当が行います。
 
-文字数の定義（Unicodeコードポイント／UTF-16／書記素）と、UTF-8制限が本文かJSON全体かも合意が必要です。現在はtrim後本文のコードポイント数とUTF-8バイト数です。**数値の合意・サーバーとの一致検証は未完了です。**
+本文は trim 後の Unicode コードポイント数で最大500文字。ステージングは `VITE_API_MODE=live VITE_POST_MAX_CHARACTERS=500 npm run build`。実APIでの結合確認は統合担当が行います。
 
 ### 同姓同名
 

@@ -33,3 +33,28 @@ describe('API契約v1との接続', () => {
     await expect(createHttpApi().post({ text: 'メモ', sentiment: 'good', target_type: 'person', target_id: 'p' })).rejects.toMatchObject({ status: 401 });
   });
 });
+
+describe('投稿と検索の通信失敗', () => {
+  const input = { text: 'メモ', sentiment: 'good' as const, target_type: 'person' as const, target_id: 'p' };
+  it.each([401, 403, 429, 503])('HTTP %sを投稿・検索の失敗として返す', async status => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { status }))));
+    const api = createHttpApi();
+    await expect(api.people('田')).rejects.toMatchObject({ status });
+    await expect(api.post(input)).rejects.toMatchObject({ status });
+  });
+  it.each(['people', 'post'] as const)('%sの切断・タイムアウトを区別する', async method => {
+    const api = createHttpApi();
+    const request = () => method === 'people' ? api.people('田') : api.post(input);
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
+    await expect(request()).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      })));
+      const rejection = expect(request()).rejects.toMatchObject({ code: 'TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(20000);
+      await rejection;
+    } finally { vi.useRealTimers(); }
+  });
+});

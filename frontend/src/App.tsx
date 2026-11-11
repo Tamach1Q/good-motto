@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api as defaultApi, createDemoApi, errorMessage, isDemo } from './api';
+import { ApiError, api as defaultApi, createDemoApi, errorMessage, isDemo } from './api';
 import type { DemoScenario } from './api';
 import TargetPicker, { PersonLabel } from './TargetPicker';
 import type { Analysis, Api, Sentiment, Target } from './types';
@@ -26,6 +26,7 @@ export default function App({ api: providedApi, demo = isDemo }: { api?: Api; de
   const [targetType, setTargetType] = useState<'person' | 'place'>('person');
   const [target, setTarget] = useState<Target | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [uncertain, setUncertain] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
   const [postId, setPostId] = useState('');
@@ -77,15 +78,20 @@ export default function App({ api: providedApi, demo = isDemo }: { api?: Api; de
   }
   function backToWrite() { analysisController.current?.abort(); setStage('write'); setError(''); }
   async function post() {
-    if (!target || !validText || !auth.allowed || postingLock.current) return;
+    if (!target || !validText || !auth.allowed || uncertain || postingLock.current) return;
     postingLock.current = true; setPosting(true); setError('');
     try {
       const result = await api.post({ text: text.trim(), sentiment, target_type: target.type, target_id: target.type === 'person' ? target.person.id : target.place.id });
       setPostId(result.post_id); setStage('done'); setText('');
-    } catch (e) { setError(`${errorMessage(e)} 投稿できたか不明な場合は、担当者に確認してから再度お試しください。`); await auth.handleError(e); }
+    } catch (e) {
+      const unknown = !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
+      if (unknown) setUncertain(true);
+      setError(errorMessage(e));
+      await auth.handleError(e);
+    }
     finally { postingLock.current = false; setPosting(false); }
   }
-  function reset() { setText(''); setSaveDraft(false); setTarget(null); setAnalysis(null); setError(''); setPostId(''); setStage('write'); }
+  function reset() { setUncertain(false); setText(''); setSaveDraft(false); setTarget(null); setAnalysis(null); setError(''); setPostId(''); setStage('write'); }
   return <div className="app-shell">
     <aside className="desktop-note" aria-hidden="true"><span className="brand-mark">g/m</span><p>言えなかったことも、<br />よかったことも。</p><span>Good / Motto</span></aside>
     <main className="phone-surface" aria-busy={posting || stage === 'analyzing'}>
@@ -121,7 +127,8 @@ export default function App({ api: providedApi, demo = isDemo }: { api?: Api; de
             {text.trim() && textError && <p className="error-panel" role="alert">{textError}</p>}
             <p className="hint">本文も修正できます。人物向けの内容は週次で集計し、配信条件を満たした場合にSlackで届きます。</p>
             {error && <p className="error-panel" role="alert">{error}</p>}
-            <div className="actions"><button className="primary" disabled={!target || !validText || posting} onClick={post}>{posting ? <><span className="spinner small" /> 投稿しています</> : demo ? '投稿を試す' : '投稿する'}</button><button className="secondary" disabled={posting} onClick={backToWrite}>入力に戻る</button></div>
+            {uncertain && <p role="status" className="error-panel">投稿結果を確認できません。二重投稿を防ぐため再送を停止しました。担当者に確認してください。</p>}
+            <div className="actions"><button className="primary" disabled={!target || !validText || posting || uncertain} onClick={post}>{posting ? <><span className="spinner small" /> 投稿しています</> : demo ? '投稿を試す' : '投稿する'}</button><button className="secondary" disabled={posting} onClick={backToWrite}>入力に戻る</button></div>
           </>}
           {stage === 'done' && <><div className="done-card"><span className="done-check" aria-hidden="true">✓</span><h2>{demo ? '操作の確認ができました' : `${sentiment === 'good' ? 'Good' : 'Motto'} を記録しました`}</h2><p>{target?.type === 'person' ? '人物向けの通知は週次で行われます。原文をそのまま本人へ転送することはありません。' : '場所ごとの集計に使われます。'}</p>{!demo && <small>投稿ID：{postId}</small>}</div><div className="actions"><button className="primary" onClick={reset}>新しく書く</button></div></>}
         </section>)}

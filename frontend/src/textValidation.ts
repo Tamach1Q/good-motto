@@ -1,4 +1,4 @@
-// API契約に数値が未定義のため、値を推測しません。バックエンドと合意した値のみ設定します。
+// バックエンドと同じ、trim後のUnicodeコードポイント数。
 export interface TextLimits { characters?: number; bytes?: number }
 function positiveInteger(value: string | undefined): number | undefined {
   if (!value) return undefined;
@@ -7,7 +7,7 @@ function positiveInteger(value: string | undefined): number | undefined {
   return n;
 }
 export const textLimits: TextLimits = {
-  characters: positiveInteger(import.meta.env.VITE_POST_MAX_CHARACTERS),
+  characters: positiveInteger(import.meta.env.VITE_POST_MAX_CHARACTERS) ?? 500,
   bytes: positiveInteger(import.meta.env.VITE_POST_MAX_BYTES),
 };
 export function measureText(text: string) {
