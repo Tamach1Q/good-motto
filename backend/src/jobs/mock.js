@@ -55,9 +55,14 @@ export function createMemoryRepo({ people = mockPeople, posts = [], deliveries =
     async getRecipient(personId) { return people.find(p => p.id === personId) || null; },
     async listDisplayNames() { return people.map(p => p.display_name); },
     async getDelivery(personId, weekKey) { return deliveries[key(personId, weekKey)] || null; },
-    async claimDelivery(personId, weekKey) {
+    // 提案中の D1 実装と同じく、allowedTeamId が渡されたら受信同意・チームも claim の条件にする
+    async claimDelivery(personId, weekKey, { allowedTeamId } = {}) {
       const current = deliveries[key(personId, weekKey)];
       if (current && current.status !== 'failed') return false;
+      if (allowedTeamId) {
+        const person = people.find(p => p.id === personId);
+        if (!person || person.slack_team_id !== allowedTeamId || !(person.feedback_opt_in === 1 || person.feedback_opt_in === true)) return false;
+      }
       deliveries[key(personId, weekKey)] = { status: 'sending', attempts: (current?.attempts || 0) + 1, updated_at: new Date().toISOString() };
       return true;
     },

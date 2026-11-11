@@ -63,3 +63,46 @@ test('scheduled() wired to real D1 repo and Gemini module: dry-run, live-test on
   assert.deepEqual(revoked.counts, { 'skipped:no_consent': 1 });
   assert.ok(logs.every(m => !/xoxb|架空の資料/.test(m)));
 });
+
+test('real D1: consent revoked during Gemini summarize, and two concurrent cron runs, never cause an extra DM', async t => {
+  const db = await createD1(t);
+  const repo = createRepository(db, { now: () => NOW });
+  const donor = '00000000-0000-4000-8000-000000000004';
+  await db.prepare('INSERT INTO people VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(donor, 'FAKE_TEAM_LOCAL', 'FAKE_USER_DONOR', '架空ハル', NOW.getTime(), 0, NOW.getTime()).run();
+  const at = new Date(targetWeek(NOW).from.getTime() + 86400000);
+  for (const author of [AO, MIDORI, donor]) {
+    await addPost(db, { author, type: 'person', target: SORA, text: '架空の資料を整える手伝いについての感想です。', at });
+  }
+  await repo.updatePreferences(SORA, { terms_accepted: true, feedback_opt_in: true });
+
+  let onGemini = async () => {};
+  let posts = 0;
+  const fetch = async url => {
+    if (String(url).includes('generativelanguage')) { await onGemini(); return geminiResponse(SAFE_SUMMARY); }
+    const method = String(url).split('/').pop();
+    if (method === 'auth.test') return Response.json({ ok: true, team_id: 'FAKE_TEAM_LOCAL', user_id: 'UBOT', bot_id: 'BBOT' });
+    if (method === 'conversations.open') return Response.json({ ok: true, channel: { id: 'DFAKE' } });
+    if (method === 'chat.postMessage') { posts++; await new Promise(r => setTimeout(r, 10)); return Response.json({ ok: true, channel: 'DFAKE', ts: '1.0' }); }
+    throw new Error(`unexpected ${url}`);
+  };
+  const scheduled = createScheduledWeeklyDigest({
+    createRepository: d => createRepository(d, { now: () => NOW }), createGemini, fetch, log: { info() {}, error() {} },
+  });
+  const env = { DB: db, ALLOWED_SLACK_TEAM_ID: 'FAKE_TEAM_LOCAL', GEMINI_API_KEY: 'fake-key', GEMINI_MODEL: 'fake-model',
+    SLACK_BOT_TOKEN: 'xoxb-fake', DIGEST_MODE: 'live-test', DIGEST_ONLY_PERSON_IDS: SORA };
+  const run = () => scheduled({ scheduledTime: NOW.getTime() }, env, { waitUntil() {} });
+
+  // 要約中に本人が受信を撤回 → 送らない
+  onGemini = () => repo.updatePreferences(SORA, { terms_accepted: true, feedback_opt_in: false });
+  assert.deepEqual((await run()).counts, { 'skipped:no_consent_before_send': 1 });
+  assert.equal(posts, 0);
+
+  // 再同意後、Cronが同時に2回起動 → DMは1通だけ
+  onGemini = () => new Promise(r => setTimeout(r, 20));
+  await repo.updatePreferences(SORA, { terms_accepted: true, feedback_opt_in: true });
+  const [a, b] = await Promise.all([run(), run()]);
+  assert.equal(posts, 1);
+  assert.deepEqual({ ...a.counts, ...b.counts }, { sent: 1, 'skipped:already_claimed': 1 });
+  assert.equal((await repo.getDelivery(SORA, a.week)).status, 'sent');
+});

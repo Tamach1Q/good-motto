@@ -9,6 +9,7 @@
 | 週次抽出（前週の月曜0:00〜日曜24:00 JST、`target_type='person'` のみ） | ✅ `targetWeek()` |
 | `slack_team_id` が `ALLOWED_SLACK_TEAM_ID` と一致しない人には送らない | ✅ |
 | `feedback_opt_in` が true でない人／Slack ID がない人には送らない（実行時に毎回 DB から取得） | ✅ |
+| 送信直前に受信者を取り直し、同意・チーム・Slack ID を再検証（要約中の撤回・変更に対応。取り直した Slack ID に送る） | ✅ ごく短い競合は残る |
 | 独立した投稿者が3人未満なら保留（自分への投稿は数えない） | ✅ 暫定ガード |
 | 要約に原文（連続12文字）・他人の表示名が含まれたら保留 | ✅ 暫定ガード |
 | 要約に数字・日時・引用など具体情報がある、または要約側が `needs_review: true` を返したら保留（手動確認） | ✅ 暫定ガード |
@@ -114,13 +115,30 @@ PR #14 の `backend/src/data/repository.mjs` が、次の関数をこの形で�
 | `getRecipient(personId)` | `{ id, slack_team_id, slack_user_id, display_name, feedback_opt_in }` または `null` |
 | `listDisplayNames()` | 全人物の `display_name` |
 | `getDelivery(personId, weekKey)` | `slack_digest_deliveries` の行または `null` |
-| `claimDelivery(personId, weekKey)` | 未送信 or `failed` のときだけ `sending` にして `true`（原子的） |
+| `claimDelivery(personId, weekKey, { allowedTeamId })` | 未送信 or `failed` のときだけ `sending` にして `true`（原子的）。第3引数は下の提案用で、現行実装は無視してよい |
 | `finishDelivery(personId, weekKey, { status, ts?, channel?, error? })` | `status`: `sent` / `failed` / `unknown` |
+
+### #4 への提案：claim の条件に同意を含める
+
+ジョブは送信直前に受信者を取り直して再検証します。これに加えて、claim の SQL に同意とチームの条件を入れると、確認と確保が1つの SQL で済みます。その分、競合の余地をさらに狭められます（完全な保証にはなりません）。ジョブは `claimDelivery(personId, weekKey, { allowedTeamId })` と呼ぶので、`repository.mjs` 側で次のように対応できます。
+
+```sql
+INSERT INTO slack_digest_deliveries (person_id, week_key, status, attempts, updated_at)
+SELECT ?1, ?2, 'sending', 1, ?3
+WHERE EXISTS (SELECT 1 FROM people WHERE id = ?1 AND slack_team_id = ?4 AND feedback_opt_in = 1)
+ON CONFLICT (person_id, week_key) DO UPDATE SET
+  status = 'sending', attempts = slack_digest_deliveries.attempts + 1,
+  slack_ts = NULL, slack_channel = NULL, error = NULL, updated_at = excluded.updated_at
+WHERE slack_digest_deliveries.status = 'failed'
+```
+
+（SQLite の `INSERT ... SELECT ... ON CONFLICT` は、SELECT に `WHERE` があるときに使えます。この SQL を採用するかは #4 の判断です。モックの repo はこの挙動を再現しています。）
 
 要約は `backend/src/ai/gemini.mjs` の `createGemini({ apiKey, model, fetch }).summarize({ good, motto }) => { good, motto, needs_review }` を使います。
 
 ## 運用メモ
 
 - `unknown` は、Slack 側に届いている可能性がある状態です（送信結果が不明、または送信後の記録に失敗）。自動再送はしません。DMが届いたか確認し、届いていなければ `slack_digest_deliveries.status` を `failed` に戻してから再実行します。
+- 送信直前の再検証で不適格になった場合は、claim を `failed` に戻して送りません（結果は `skipped:no_consent_before_send` など）。次回の実行では、その時点の同意状態で改めて判定します。
 - `sending` のまま残った場合（処理が途中で落ちた場合）も、同じように到着を確認してから手で戻します。
 - `held:needs_manual_review` になった人の分は自動では送りません。内容を人が確認してから扱いを決めます。

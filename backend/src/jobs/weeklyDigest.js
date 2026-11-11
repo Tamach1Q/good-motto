@@ -73,6 +73,22 @@ function validateSummary(summary, posts, forbiddenNames) {
 
 const optedIn = recipient => recipient.feedback_opt_in === 1 || recipient.feedback_opt_in === true;
 
+/** 送信対象として不適格な理由を返す（適格なら null）。 */
+function recipientProblem(recipient, allowedTeamId) {
+  if (!recipient) return 'unknown_person';
+  if (recipient.slack_team_id !== allowedTeamId) return 'workspace_not_allowed';
+  if (!optedIn(recipient)) return 'no_consent';
+  if (!recipient.slack_user_id) return 'no_slack_id';
+  return null;
+}
+
+/** 送信しなかった claim を failed に戻す。戻せなくても sending のまま残るだけで、再送はされない。 */
+async function releaseClaim(repo, personId, weekKey, reason, log) {
+  try { await repo.finishDelivery(personId, weekKey, { status: 'failed', error: reason }); } catch (error) {
+    log.error?.(`[weekly-digest] could not release claim person=${personId}: ${error?.name || 'Error'}`);
+  }
+}
+
 /**
  * 週次バッチ本体。項目名は docs/auth/slack-oidc-v1.md §5 の D1 スキーマに合わせる。
  * 匿名性チェック（独立投稿者数・原文一致・具体情報）は暫定の防御であり、匿名性を保証するものではない。
@@ -106,10 +122,8 @@ export async function runWeeklyDigest({
   for (const [personId, personPosts] of byPerson) {
     if (only && !only.includes(personId)) continue;
     const recipient = await repo.getRecipient(personId);
-    if (!recipient) { record(personId, 'skipped', { reason: 'unknown_person' }); continue; }
-    if (recipient.slack_team_id !== allowedTeamId) { record(personId, 'skipped', { reason: 'workspace_not_allowed' }); continue; }
-    if (!optedIn(recipient)) { record(personId, 'skipped', { reason: 'no_consent' }); continue; }
-    if (!recipient.slack_user_id) { record(personId, 'skipped', { reason: 'no_slack_id' }); continue; }
+    const ineligible = recipientProblem(recipient, allowedTeamId);
+    if (ineligible) { record(personId, 'skipped', { reason: ineligible }); continue; }
     // 自分自身への投稿は独立した声として数えない
     const independent = personPosts.filter(p => p.author_person_id !== personId);
     const authors = new Set(independent.map(p => p.author_person_id)).size;
@@ -138,11 +152,32 @@ export async function runWeeklyDigest({
 
     if (dryRun) { record(personId, 'dry_run', { authors, preview: payload.text }); continue; }
 
-    // 送信前に「送信中」を確保し、並行実行・再実行での二重送信を防ぐ
-    if (!(await repo.claimDelivery(personId, week.key))) { record(personId, 'skipped', { reason: 'already_claimed' }); continue; }
+    // 送信前に「送信中」を確保し、並行実行・再実行での二重送信を防ぐ。
+    // allowedTeamId を渡すので、対応した repo は同意・チームを claim の DB 条件にも含められる。
+    if (!(await repo.claimDelivery(personId, week.key, { allowedTeamId }))) {
+      // claim できなかった理由が同意撤回なら、それを記録する（送信はしない）
+      const why = recipientProblem(await repo.getRecipient(personId).catch(() => null), allowedTeamId);
+      record(personId, 'skipped', { reason: why ? `${why}_before_send` : 'already_claimed' });
+      continue;
+    }
+
+    // 要約中に同意撤回・チーム変更・Slack ID 変更があり得るため、送信直前に受信者を取り直して再検証する。
+    // （この確認と送信の間のごく短い競合は残る。完全な保証ではない）
+    let current;
+    try { current = await repo.getRecipient(personId); } catch (error) {
+      await releaseClaim(repo, personId, week.key, 'recipient_recheck_failed', log);
+      record(personId, 'failed', { reason: 'recipient_recheck_failed' });
+      continue;
+    }
+    const nowIneligible = recipientProblem(current, allowedTeamId);
+    if (nowIneligible) {
+      await releaseClaim(repo, personId, week.key, nowIneligible, log);
+      record(personId, 'skipped', { reason: `${nowIneligible}_before_send` });
+      continue;
+    }
     let sent;
     try {
-      sent = await deliver(recipient.slack_user_id, payload);
+      sent = await deliver(current.slack_user_id, payload);
     } catch (error) {
       const code = error instanceof DeliveryError ? error.code : 'unexpected_error';
       // 結果不明は自動再送しない（Slackで到着を確認してから手動で failed に戻す）
