@@ -1,6 +1,8 @@
 #include <M5Unified.h>
 #include <ArduinoJson.h>
 
+#include "mood_logic.h"
+
 // ============================================================
 // GOOD / MOTTO Core2 - Issue #1 Phase 1 (offline mock)
 //
@@ -24,14 +26,6 @@ struct FetchResult {
   bool ok;
   PlaceCounts counts;
   String errorCode;
-};
-
-enum DisplayState {
-  DISPLAY_GRAY,
-  DISPLAY_GREEN,
-  DISPLAY_YELLOW,
-  DISPLAY_RED,
-  DISPLAY_ERROR
 };
 
 // Exact API-contract shape, with the five values required by Issue #1.
@@ -137,16 +131,6 @@ uint16_t colorRedSoft;
 uint16_t colorGood;
 uint16_t colorMotto;
 
-DisplayState evaluateDisplayState(const PlaceCounts &counts) {
-  uint64_t total = (uint64_t)counts.goodCount + counts.mottoCount;
-  if (total < 5) return DISPLAY_GRAY;
-
-  float goodRate = (float)counts.goodCount / (float)total;
-  if (goodRate >= 0.65f) return DISPLAY_GREEN;
-  if (goodRate >= 0.40f) return DISPLAY_YELLOW;
-  return DISPLAY_RED;
-}
-
 void calculatePercentages(const PlaceCounts &counts, int &goodPercent,
                           int &mottoPercent) {
   uint64_t total = (uint64_t)counts.goodCount + counts.mottoCount;
@@ -234,7 +218,8 @@ void loadCurrentCase() {
   currentCounts = result.counts;
   hasValidData = true;
   currentError = "";
-  currentState = evaluateDisplayState(currentCounts);
+  currentState = evaluateDisplayState(currentCounts.goodCount,
+                                      currentCounts.mottoCount);
   calculatePercentages(currentCounts, currentGoodPercent, currentMottoPercent);
 
   Serial.printf("MOCK %u/%u: good=%lu motto=%lu -> %s\n",

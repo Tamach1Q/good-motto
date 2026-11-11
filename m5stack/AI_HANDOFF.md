@@ -25,6 +25,7 @@ GitHub Issue #1に従い、場所別のGOOD/MOTTO集計からM5Stack Core2の画
 - 画面上での投稿生件数の非表示
 - `M5Canvas`によるダブルバッファ描画
 - データ取得元を差し替えるための`CountsProvider`インターフェース
+- Arduino非依存の`mood_logic.h`と境界値テスト
 
 ## 重要な設計
 
@@ -109,6 +110,23 @@ Phase 2開始時に確認が必要な情報:
 - TLSのルートCAまたは証明書運用方針
 - API側のPRがマージされ、ステージングで利用可能か
 
+ステージングのベースURLは`https://good-motto-staging.tamach1q.workers.dev`。2026-11-11時点では仮Workerで、件数APIは未公開。
+
+## 検証状況
+
+- Core2向けコンパイル: 成功
+- ホスト上の色判定テスト: 11件成功、0件失敗
+- 実機書き込み: 未完了
+- A/B/C操作と5ケースの画面色: 未確認
+
+実機書き込み時にmacOSのCH9102シリアルドライバーで`termios.error: (22, 'Invalid argument')`が発生している。ドライバー再設定後に実機結果と画面写真を追記すること。
+
+ホストテストはリポジトリルートから次で再実行できる。
+
+```sh
+./m5stack/tests/run_tests.sh
+```
+
 ## やってはいけないこと
 
 - Wi-FiパスワードやBearerトークンをGitへ追加しない
@@ -119,11 +137,14 @@ Phase 2開始時に確認が必要な情報:
 
 ## ブランチ・PR方針
 
-Issueの指定に従い、作業ブランチ例は`feat/1-m5stack-mood`、PRのbaseは`develop`とする。自動マージはしない。現在のローカル作業は、リモートを設定していないためcommit/pushしていない。
+Issueの指定に従い、作業ブランチは`feat/1-m5stack-mood`、PRのbaseは`develop`。Pull Requestは[#15](https://github.com/Tamach1Q/good-motto/pull/15)として作成・push済み。レビュー前に自動マージしない。
 
 ## 主なファイル
 
 - `m5stack.ino`: Phase 1ファームウェア
+- `mood_logic.h`: 整数の交差乗算による色判定
+- `tests/test_mood_logic.cpp`: Issue指定ケースと境界値のテスト
+- `tests/run_tests.sh`: Mac上でのテスト実行
 - `README.md`: 人向けセットアップ・動作確認
 - `AI_HANDOFF.md`: この文書
 

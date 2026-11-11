@@ -38,11 +38,46 @@ GitHub Issue [#1「場所別Good/Motto件数を取得し、割合から画面色
 
 画面には割合のみを表示します。確認用の生件数はシリアルモニターだけに出力されます。
 
+## 自動テスト
+
+色判定はArduino非依存の`mood_logic.h`へ分離しています。Macのターミナルで次を実行すると、Issue指定の5ケースと境界値を確認できます。
+
+```sh
+./m5stack/tests/run_tests.sh
+```
+
+テスト対象:
+
+- Issue指定: 8/12、13/7、7/13、2/1、0/0
+- 合計件数: 4件、5件
+- GOOD率: 39%、40%、64%、65%
+- 0件時のゼロ除算回避
+
+判定は浮動小数点ではなく整数の交差乗算を使用します。
+
+```cpp
+good_count * 100 >= total * 65
+good_count * 100 >= total * 40
+```
+
+### 2026-11-11の確認結果
+
+- Arduino CLIによるCore2向けコンパイル: 成功
+- ホスト上の色判定テスト: 11件すべて成功
+- 新コードのCore2への書き込み: 未完了
+- A/B/C操作と5ケースの実機画面: 未確認
+
+実機書き込みはmacOSのCH9102 USBシリアルドライバーで`termios.error: (22, 'Invalid argument')`が発生しているため、ドライバーを再設定してから確認します。実機確認前に完了済みとは扱いません。
+
 ## ファイル
 
 ```text
 m5stack/
 ├── m5stack.ino         # Core2ファームウェア
+├── mood_logic.h        # Arduino非依存の色判定
+├── tests/
+│   ├── run_tests.sh    # Mac用テスト実行スクリプト
+│   └── test_mood_logic.cpp
 ├── README.md           # セットアップと操作方法
 └── AI_HANDOFF.md       # 開発者・AI向けの引き継ぎ情報
 ```
@@ -97,6 +132,8 @@ Phase 2では`MockCountsProvider`をHTTPS版のProviderへ差し替え、次を�
 モック版とAPI版で同じ`PlaceCounts`、JSON解析、色判定、UIを使う設計です。
 
 Phase 2を始める際に必要なのは、ステージングAPIのHTTPSベースURL、`place_id`、読み取り専用デバイストークン、TLS証明書の扱いです。トークンはGitへコミットしないでください。
+
+ステージングのベースURLは`https://good-motto-staging.tamach1q.workers.dev`です。2026-11-11時点では仮Workerで、件数APIは未公開です。
 
 ## トラブルシューティング
 
