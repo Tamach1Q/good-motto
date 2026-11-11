@@ -43,3 +43,12 @@ export async function sendDm(slackUserId, payload, token, fetcher = fetch) {
   if (!sent.ts || !sent.channel) throw new DeliveryError('delivery_unknown');
   return { channel: sent.channel, ts: sent.ts };
 }
+
+/**
+ * Bot Token の疎通確認（auth.test）。メッセージは送らない。
+ * 戻り値にトークンは含めない。ワークスペースの一致確認に使う。
+ */
+export async function authTest(token, fetcher = fetch) {
+  const data = await slackCall('auth.test', {}, token, fetcher);
+  return { team_id: data.team_id, bot_user_id: data.user_id, is_bot: Boolean(data.bot_id) };
+}
