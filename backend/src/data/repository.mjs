@@ -92,13 +92,21 @@ export function createRepository(db, { now = () => new Date() } = {}) {
       return (await rows('SELECT display_name FROM people ORDER BY id')).map(row => row.display_name);
     },
     getDelivery: (personId, weekKey) => first('SELECT * FROM slack_digest_deliveries WHERE person_id = ? AND week_key = ?', [personId, weekKey]),
-    async claimDelivery(personId, weekKey) {
+    async claimDelivery(personId, weekKey, { allowedTeamId } = {}) {
+      // Slackジョブは送信前に許可チーム・受信同意を確認する。
+      // 同意撤回が要約中やclaim前に起きても、送信枠を確保させない。
+      // 第3引数省略時は既存のテスト・内部呼び出しとの互換性を維持する。
       const result = await query(`INSERT INTO slack_digest_deliveries (person_id, week_key, status, attempts, updated_at)
-        VALUES (?, ?, 'sending', 1, ?)
+        SELECT ?, ?, 'sending', 1, ?
+        WHERE (? IS NULL OR EXISTS (
+          SELECT 1 FROM people WHERE id = ? AND slack_team_id = ?
+            AND terms_accepted_at IS NOT NULL AND feedback_opt_in = 1
+        ))
         ON CONFLICT (person_id, week_key) DO UPDATE SET
           status = 'sending', attempts = slack_digest_deliveries.attempts + 1,
           slack_ts = NULL, slack_channel = NULL, error = NULL, updated_at = excluded.updated_at
-        WHERE slack_digest_deliveries.status = 'failed'`, [personId, weekKey, now().getTime()], 'run');
+        WHERE slack_digest_deliveries.status = 'failed'`,
+      [personId, weekKey, now().getTime(), allowedTeamId ?? null, personId, allowedTeamId ?? null], 'run');
       return result.meta.changes === 1;
     },
     async finishDelivery(personId, weekKey, { status, ts, channel, error }) {
