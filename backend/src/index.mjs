@@ -3,6 +3,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { analysis } from './api/mock-data.mjs';
 import { createRepository, DatabaseUnavailable } from './data/repository.mjs';
 import { createGemini, GeminiError } from './ai/gemini.mjs';
+import { createScheduledWeeklyDigest } from './jobs/scheduled.js';
 import { AuthError, authorizationUrl, createSlackOidc } from './auth/slack-oidc.mjs';
 import { SESSION_COOKIE, STATE_COOKIE, SESSION_SECONDS, STATE_SECONDS, COOKIE_OPTIONS, randomToken, hashToken } from './auth/tokens.mjs';
 
@@ -204,4 +205,19 @@ export function createApp({ now = () => new Date(), fetch: fetchImpl = globalThi
   return app;
 }
 
-export default createApp();
+// HTTPと週次Cronを同じCloudflare Workerに統合する。
+// 外部サービスへの接続は依存注入可能にして、実Botに送らずにテストできるようにする。
+export function createWorker(options = {}) {
+  const app = createApp(options);
+  return {
+    fetch: app.fetch,
+    scheduled: createScheduledWeeklyDigest({
+      createRepository,
+      createGemini,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(options.log ? { log: options.log } : {}),
+    }),
+  };
+}
+
+export default createWorker();
