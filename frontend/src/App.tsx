@@ -6,20 +6,52 @@ import type { Analysis, Api, Sentiment, Target } from './types';
 import { measureText, textLimits, validateText } from './textValidation';
 import { SessionPanel, useSession } from './useSession';
 
-const DRAFT_KEY = 'good-motto-draft-v2';
-const DRAFT_OPT_IN = 'good-motto-draft-enabled-v2';
-function draftEnabled() { try { return sessionStorage.getItem(DRAFT_OPT_IN) === 'true'; } catch { return false; } }
-function readDraft() { try { return draftEnabled() ? sessionStorage.getItem(DRAFT_KEY) ?? '' : ''; } catch { return ''; } }
+// 保存済みの本文は、/me で確認した同一人物にだけ復元する。
+const DRAFT_KEY = 'good-motto-draft-v3';
+const DEMO_DRAFT_OWNER = 'demo';
+const LEGACY_DRAFT_KEYS = ['good-motto-draft-v1', 'good-motto-draft-v2', 'good-motto-draft-enabled-v2'];
+type Draft = { text: string; enabled: boolean };
+const EMPTY_DRAFT: Draft = { text: '', enabled: false };
+function discardLegacyDrafts() {
+  for (const key of LEGACY_DRAFT_KEYS) sessionStorage.removeItem(key);
+}
+function readDraft(owner: string): Draft {
+  try {
+    discardLegacyDrafts();
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return EMPTY_DRAFT;
+    const saved: unknown = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object' || !('owner' in saved) || !('text' in saved) ||
+        saved.owner !== owner || typeof saved.text !== 'string') {
+      sessionStorage.removeItem(DRAFT_KEY);
+      return EMPTY_DRAFT;
+    }
+    return { text: saved.text, enabled: true };
+  } catch {
+    // 不正な保存値やストレージへのアクセス失敗時には復元しない。
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
+    return EMPTY_DRAFT;
+  }
+}
+function clearDraft() {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY);
+    discardLegacyDrafts();
+  } catch { /* storage unavailable */ }
+}
 
 export default function App({ api: providedApi, demo = isDemo }: { api?: Api; demo?: boolean }) {
   const [scenario, setScenario] = useState<DemoScenario>('normal');
   const scenarioApi = useMemo(() => createDemoApi(scenario), [scenario]);
   const api = providedApi ?? (demo ? scenarioApi : defaultApi);
   const [consent, setConsent] = useState(false);
-  const [saveDraft, setSaveDraft] = useState(draftEnabled);
-  const [draftError, setDraftError] = useState('');
   const auth = useSession(api, demo);
-  const [text, setText] = useState(readDraft);
+  // Liveでは本人確認前に下書きを読み出さない。Demoだけ固定の仮利用者を使う。
+  const [initialDraft] = useState<Draft>(() => demo ? readDraft(DEMO_DRAFT_OWNER) : EMPTY_DRAFT);
+  const [draftOwner, setDraftOwner] = useState<string | null>(demo ? DEMO_DRAFT_OWNER : null);
+  const [saveDraft, setSaveDraft] = useState(initialDraft.enabled);
+  const [draftError, setDraftError] = useState('');
+  const [text, setText] = useState(initialDraft.text);
   const [stage, setStage] = useState<'write' | 'analyzing' | 'review' | 'done'>('write');
   const [picker, setPicker] = useState(false);
   const [sentiment, setSentiment] = useState<Sentiment>('motto');
@@ -35,28 +67,43 @@ export default function App({ api: providedApi, demo = isDemo }: { api?: Api; de
   const heading = useRef<HTMLHeadingElement>(null);
   const targetButton = useRef<HTMLButtonElement>(null);
   const wasPicker = useRef(false);
-  const previousUserId = useRef<string | null>(null);
+  const currentDraftOwner = demo ? DEMO_DRAFT_OWNER : auth.user?.person_id ?? null;
+  const draftReady = currentDraftOwner !== null && currentDraftOwner === draftOwner;
   const textError = validateText(text);
   const validText = !textError;
   const count = measureText(text.trim());
   const canAnalyze = validText && (demo ? consent : auth.allowed);
 
   useEffect(() => {
+    if (!currentDraftOwner || currentDraftOwner === draftOwner) return;
+    // 初回ログインやSlack認証後のページ再読み込み時に、確認済みの本人IDで照合する。
+    // 別利用者なら古い本文と操作状態を破棄する。未認証中は復元・保存しない。
+    const restored = readDraft(currentDraftOwner);
+    if (draftOwner !== null) {
+      analysisController.current?.abort();
+      setPicker(false);
+      setConsent(false);
+      setTarget(null);
+      setAnalysis(null);
+      setError('');
+      setPostId('');
+      setUncertain(false);
+      setStage('write');
+    }
+    setText(restored.text);
+    setSaveDraft(restored.enabled);
+    setDraftOwner(currentDraftOwner);
+  }, [currentDraftOwner, draftOwner]);
+  useEffect(() => {
+    if (!draftReady || !currentDraftOwner) return;
     try {
-      sessionStorage.removeItem('good-motto-draft-v1');
-      if (!saveDraft || stage === 'done') { sessionStorage.removeItem(DRAFT_KEY); sessionStorage.removeItem(DRAFT_OPT_IN); }
-      else { sessionStorage.setItem(DRAFT_OPT_IN, 'true'); if (text) sessionStorage.setItem(DRAFT_KEY, text); else sessionStorage.removeItem(DRAFT_KEY); }
+      discardLegacyDrafts();
+      if (!saveDraft || stage === 'done') sessionStorage.removeItem(DRAFT_KEY);
+      else sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ owner: currentDraftOwner, text }));
       setDraftError('');
     } catch { setDraftError('この環境では下書きを保存できません。本文は画面を閉じるまで残ります。'); }
-  }, [text, stage, saveDraft]);
+  }, [currentDraftOwner, draftReady, text, stage, saveDraft]);
   useEffect(() => () => analysisController.current?.abort(), []);
-  useEffect(() => {
-    const id = auth.user?.person_id;
-    if (id && previousUserId.current && previousUserId.current !== id) {
-      reset(); setPicker(false); setConsent(false);
-    }
-    if (id) previousUserId.current = id;
-  }, [auth.user?.person_id]);
   useEffect(() => {
     if (picker) return;
     if (wasPicker.current) { targetButton.current?.focus(); wasPicker.current = false; }
@@ -91,14 +138,15 @@ export default function App({ api: providedApi, demo = isDemo }: { api?: Api; de
     }
     finally { postingLock.current = false; setPosting(false); }
   }
-  function reset() { setUncertain(false); setText(''); setSaveDraft(false); setTarget(null); setAnalysis(null); setError(''); setPostId(''); setStage('write'); }
+  function reset() { clearDraft(); setUncertain(false); setText(''); setSaveDraft(false); setTarget(null); setAnalysis(null); setError(''); setPostId(''); setStage('write'); }
   return <div className="app-shell">
     <aside className="desktop-note" aria-hidden="true"><span className="brand-mark">g/m</span><p>言えなかったことも、<br />よかったことも。</p><span>Good / Motto</span></aside>
     <main className="phone-surface" aria-busy={posting || stage === 'analyzing'}>
       <div className="brand"><span className="brand-dot" /> Good / Motto <span className="brand-caption">日々のメモ</span></div>
       {demo && <details className="demo-banner"><summary>デモ · 投稿は保存しません</summary><label htmlFor="demo-scenario">動作確認する状態</label><select id="demo-scenario" value={scenario} disabled={posting || stage === 'analyzing'} onChange={e => setScenario(e.target.value as DemoScenario)}><option value="normal">通常</option><option value="analyze-error">分析エラー</option><option value="unclassifiable">分析不能</option><option value="people-error">人物検索エラー</option><option value="places-error">場所取得エラー</option><option value="post-error">投稿エラー</option></select><p>「田」で同姓同名、「髙橋」で候補なしを確認できます。</p></details>}
       {!demo && <SessionPanel auth={auth} busy={posting || stage === 'analyzing'} onLogout={() => { reset(); setPicker(false); setConsent(false); }} />}
-      {auth.allowed && (picker ? <TargetPicker api={api} onAccessError={auth.handleError} initialType={targetType} onCancel={() => setPicker(false)} onSelect={selected => { setTarget(selected); setTargetType(selected.type); setPicker(false); }} />
+      {auth.allowed && !draftReady && <section className="auth-screen" role="status">下書きを確認しています。</section>}
+      {auth.allowed && draftReady && (picker ? <TargetPicker api={api} onAccessError={auth.handleError} initialType={targetType} onCancel={() => setPicker(false)} onSelect={selected => { setTarget(selected); setTargetType(selected.type); setPicker(false); }} />
         : <section className="screen" aria-labelledby="screen-heading">
           <header><p className="eyebrow">{stage === 'review' ? '投稿の確認' : stage === 'done' ? '完了' : '自分のペースで'}</p>
             <h1 ref={heading} id="screen-heading" tabIndex={-1}>{stage === 'write' ? 'メモ' : stage === 'analyzing' ? '内容を分類しています' : stage === 'review' ? '投稿内容を確認' : demo ? '投稿を試しました' : '投稿しました'}</h1>
