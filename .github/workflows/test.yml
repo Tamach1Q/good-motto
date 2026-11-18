@@ -1,4 +1,4 @@
-name: API tests
+name: Integrated tests
 
 on:
   push:
@@ -8,9 +8,10 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  backend:
+    name: Backend, D1 and Slack integration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,3 +20,31 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm run ci
+
+  frontend:
+    name: Web unit tests and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm test --prefix frontend
+        env:
+          VITE_POST_MAX_CHARACTERS: "500"
+      - run: npm run build --prefix frontend
+        env:
+          VITE_API_MODE: live
+          VITE_POST_MAX_CHARACTERS: "500"
+
+  m5stack:
+    name: M5Stack mood logic
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash m5stack/tests/run_tests.sh
