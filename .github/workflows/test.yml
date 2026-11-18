@@ -48,3 +48,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash m5stack/tests/run_tests.sh
+
+  staging-bundle:
+    name: Staging bundle dry-run (no deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --prefix frontend && npm ci --prefix backend
+      - run: npm run build --prefix frontend
+        env:
+          VITE_API_MODE: live
+          VITE_POST_MAX_CHARACTERS: "500"
+      - run: npx wrangler deploy --dry-run --env staging --outdir ../.wrangler-staging-preview
+        working-directory: backend
