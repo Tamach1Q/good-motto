@@ -1,10 +1,16 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import App from '../src/App';
 import { ApiError } from '../src/api';
 import TargetPicker from '../src/TargetPicker';
-import type { Api, Person } from '../src/types';
+import type { Api, Person, SessionUser } from '../src/types';
+
+const DRAFT_KEY = 'good-motto-draft-v3';
+const storedDraft = (): { owner: string; text: string } | null => {
+  const raw = sessionStorage.getItem(DRAFT_KEY);
+  return raw ? JSON.parse(raw) : null;
+};
 
 function makeApi(): Api {
   return {
@@ -31,17 +37,21 @@ async function review(api: Api) {
 describe('投稿の流れ', () => {
   it('初期状態では保存せず、保存を選んだ時だけ記録し、オフで削除する', async () => {
     sessionStorage.setItem('good-motto-draft-v1', '古い自動保存');
+    sessionStorage.setItem('good-motto-draft-v2', '本人に紐づいていない旧下書き');
+    sessionStorage.setItem('good-motto-draft-enabled-v2', 'true');
     const user = userEvent.setup(); const { unmount } = render(<App api={makeApi()} />);
     expect(screen.getByLabelText('メモの本文')).toHaveValue('');
     expect(sessionStorage.getItem('good-motto-draft-v1')).toBeNull();
-    await user.type(screen.getByLabelText('メモの本文'), '保存は選択制');
     expect(sessionStorage.getItem('good-motto-draft-v2')).toBeNull();
+    expect(sessionStorage.getItem('good-motto-draft-enabled-v2')).toBeNull();
+    await user.type(screen.getByLabelText('メモの本文'), '保存は選択制');
+    expect(storedDraft()).toBeNull();
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBe('保存は選択制');
+    expect(storedDraft()).toEqual({ owner: 'demo', text: '保存は選択制' });
     unmount(); render(<App api={makeApi()} />);
     expect(screen.getByLabelText('メモの本文')).toHaveValue('保存は選択制');
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBeNull();
+    expect(storedDraft()).toBeNull();
     expect(screen.getByLabelText('メモの本文')).toHaveValue('保存は選択制');
   });
   it('AIが人物IDを返しても本人選択までは投稿せず、選んだIDと修正分類を送る', async () => {
@@ -55,7 +65,7 @@ describe('投稿の流れ', () => {
     await user.click(screen.getByRole('button', { name: '投稿する' }));
     await screen.findByRole('heading', { name: '投稿しました' });
     expect(api.post).toHaveBeenCalledWith({ text: '最後まで話を聞いてほしかった', sentiment: 'good', target_type: 'person', target_id: 'person_003' });
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBeNull();
+    expect(storedDraft()).toBeNull();
   });
   it('投稿失敗で本文を残し、連打による重複リクエストを送らない', async () => {
     const api = makeApi();
@@ -74,7 +84,7 @@ describe('投稿の流れ', () => {
     fireEvent.click(post);
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText('本文')).toHaveValue('最後まで話を聞いてほしかった');
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBe('最後まで話を聞いてほしかった');
+    expect(storedDraft()).toEqual({ owner: 'self', text: '最後まで話を聞いてほしかった' });
   });
   it('分析エラーでは確認画面へ進まず、再試行用に入力を維持する', async () => {
     const api = makeApi(); api.analyze = vi.fn().mockRejectedValue(new Error('分類できませんでした'));
@@ -134,7 +144,7 @@ describe('ログインと利用設定', () => {
     await screen.findByRole('link', { name: 'Slackでログインする' });
     await user.click(screen.getByRole('button', { name: 'ログイン状態を再確認' }));
     expect(await screen.findByLabelText('メモの本文')).toHaveValue('');
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBeNull();
+    expect(storedDraft()).toBeNull();
   });
   it('403で利用同意が必要な状態になった場合は同意画面へ戻す', async () => {
     const api = makeApi();
@@ -153,7 +163,48 @@ describe('ログインと利用設定', () => {
     await user.click(screen.getByRole('button', { name: 'ログアウト' }));
     await screen.findByRole('link', { name: 'Slackでログインする' });
     expect(api.logout).toHaveBeenCalledOnce();
-    expect(sessionStorage.getItem('good-motto-draft-v2')).toBeNull();
+    expect(storedDraft()).toBeNull();
+  });
+  it('同じアカウントでページを再読み込みした場合だけ下書きを復元する', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<App api={makeApi()} demo={false} />);
+    await user.type(await screen.findByLabelText('メモの本文'), '同じ本人の下書き');
+    await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
+    expect(storedDraft()).toEqual({ owner: 'self', text: '同じ本人の下書き' });
+    unmount();
+
+    render(<App api={makeApi()} demo={false} />);
+    expect(await screen.findByLabelText('メモの本文')).toHaveValue('同じ本人の下書き');
+    expect(screen.getByRole('checkbox', { name: /このタブに下書き/ })).toBeChecked();
+  });
+  it('別アカウントでページ再読み込みすると前の下書きを見せず削除する', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<App api={makeApi()} demo={false} />);
+    await user.type(await screen.findByLabelText('メモの本文'), 'Aだけのプライベートな内容');
+    await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
+    expect(storedDraft()?.owner).toBe('self');
+    unmount();
+
+    const other = makeApi();
+    vi.mocked(other.me).mockResolvedValue({ person_id: 'other', display_name: '別利用者', terms_accepted: true, feedback_opt_in: false });
+    render(<App api={other} demo={false} />);
+    expect(await screen.findByLabelText('メモの本文')).toHaveValue('');
+    expect(screen.getByRole('checkbox', { name: /このタブに下書き/ })).not.toBeChecked();
+    expect(storedDraft()).toBeNull();
+  });
+  it('本人照会の完了前には保存済み下書きを表示せず、異なる利用者なら消去する', async () => {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ owner: 'self', text: '他人の秘密' }));
+    let resolveMe!: (user: SessionUser) => void;
+    const api = makeApi();
+    api.me = vi.fn().mockImplementation(() => new Promise<SessionUser>(resolve => { resolveMe = resolve; }));
+    render(<App api={api} demo={false} />);
+    expect(screen.queryByLabelText('メモの本文')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveMe({ person_id: 'other', display_name: '別利用者', terms_accepted: true, feedback_opt_in: false });
+    });
+    expect(await screen.findByLabelText('メモの本文')).toHaveValue('');
+    expect(storedDraft()).toBeNull();
   });
 });
 
