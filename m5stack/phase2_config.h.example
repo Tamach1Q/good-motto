@@ -1,0 +1,10 @@
+#pragma once
+
+constexpr char PHASE2_WIFI_SSID[] = "YOUR_WIFI_SSID";
+constexpr char PHASE2_WIFI_PASSWORD[] = "YOUR_WIFI_PASSWORD";
+constexpr char PHASE2_API_ORIGIN[] = "https://YOUR_STAGING_HOST";
+constexpr char PHASE2_DEVICE_KEY[] = "";
+constexpr char PHASE2_PLACE_ID[] = "laundry";
+// Insert the trusted root CA certificate in PEM format for the API host.
+constexpr char PHASE2_ROOT_CA[] = R"PEM(
+)PEM";

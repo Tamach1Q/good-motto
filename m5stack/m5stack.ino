@@ -1,17 +1,22 @@
 #include <M5Unified.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
 
 #include "mood_logic.h"
+#if __has_include("phase2_config.h")
+#include "phase2_config.h"
+#define PHASE2_ENABLED 1
+#else
+#define PHASE2_ENABLED 0
+#endif
 
 // ============================================================
-// GOOD / MOTTO Core2 - Issue #1 Phase 1 (offline mock)
-//
-// No Wi-Fi, backend, database, or secret is used in this phase.
-// A/B switches the five required mock responses. C reloads one.
-// The same JSON parser will be reused by the Phase 2 HTTPS provider.
+// Issue #1: offline mock by default, HTTPS with local configuration.
 // ============================================================
 
-const char *DEVICE_PLACE_ID = "laundry";
 const size_t MOCK_CASE_COUNT = 5;
 
 struct PlaceCounts {
@@ -37,7 +42,8 @@ const char *const MOCK_JSON_CASES[MOCK_CASE_COUNT] = {
     R"json({"place_id":"laundry","period_days":7,"good_count":0,"motto_count":0,"updated_at":"2026-11-11T00:20:00Z"})json",
 };
 
-bool parseCountsJson(const String &json, PlaceCounts &out, String &errorCode) {
+bool parseCountsJson(const String &json, const char *expectedPlace,
+                     PlaceCounts &out, String &errorCode) {
   JsonDocument document;
   DeserializationError error = deserializeJson(document, json);
   if (error) {
@@ -60,8 +66,9 @@ bool parseCountsJson(const String &json, PlaceCounts &out, String &errorCode) {
   const char *placeId = document["place_id"].as<const char *>();
   const char *updatedAt = document["updated_at"].as<const char *>();
 
-  if (periodDays <= 0 || good < 0 || motto < 0 ||
-      String(placeId) != DEVICE_PLACE_ID || String(updatedAt).length() == 0) {
+  if (periodDays != 7 || good < 0 || motto < 0 ||
+      good > UINT32_MAX || motto > UINT32_MAX ||
+      String(placeId) != expectedPlace || String(updatedAt).length() == 0) {
     errorCode = "INVALID_VALUE";
     return false;
   }
@@ -86,7 +93,7 @@ class MockCountsProvider : public CountsProvider {
  public:
   FetchResult fetch() override {
     FetchResult result;
-    result.ok = parseCountsJson(MOCK_JSON_CASES[index_], result.counts,
+    result.ok = parseCountsJson(MOCK_JSON_CASES[index_], "laundry", result.counts,
                                 result.errorCode);
     return result;
   }
@@ -106,7 +113,63 @@ class MockCountsProvider : public CountsProvider {
 };
 
 MockCountsProvider mockProvider;
+#if PHASE2_ENABLED
+class HttpsCountsProvider : public CountsProvider {
+ public:
+  const char *name() const override { return "HTTPS"; }
+
+  FetchResult fetch() override {
+    FetchResult result{};
+    const String origin(PHASE2_API_ORIGIN);
+    const String place(PHASE2_PLACE_ID);
+    if (!origin.startsWith("https://") || origin.length() <= 8 ||
+        origin.indexOf('/', 8) >= 0 || origin.indexOf('@') >= 0 ||
+        origin.indexOf('?') >= 0 || origin.indexOf('#') >= 0 ||
+        !place.length() || !PHASE2_DEVICE_KEY[0] || !PHASE2_ROOT_CA[0]) {
+      result.errorCode = "INVALID CONFIG";
+      return result;
+    }
+    for (char ch : place) {
+      if (!(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z') &&
+          !(ch >= '0' && ch <= '9') && ch != '-' && ch != '_') {
+        result.errorCode = "INVALID PLACE ID";
+        return result;
+      }
+    }
+    WiFiClientSecure client;
+    client.setCACert(PHASE2_ROOT_CA);
+    client.setHandshakeTimeout(5);
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(5000);
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    if (!http.begin(client, origin + "/api/v1/places/" + place + "/counts")) {
+      result.errorCode = "HTTPS SETUP ERROR";
+      return result;
+    }
+    http.addHeader("Authorization", String("Bearer ") + PHASE2_DEVICE_KEY);
+    const int status = http.GET();
+    if (status == HTTP_CODE_OK) {
+      result.ok = parseCountsJson(http.getString(), PHASE2_PLACE_ID,
+                                  result.counts, result.errorCode);
+    } else {
+      result.errorCode = status > 0 ? String("HTTP ") + status : "HTTPS FAILED";
+    }
+    http.end();
+    return result;
+  }
+};
+
+HttpsCountsProvider httpsProvider;
+CountsProvider *countsProvider = &httpsProvider;
+constexpr uint32_t POLL_INTERVAL_MS = 5UL * 60 * 1000;
+constexpr uint32_t CONNECTION_RETRY_MS = 15000;
+uint32_t lastFetchAt = 0;
+uint32_t lastWifiAttemptAt = 0;
+bool fetchPending = true;
+#else
 CountsProvider *countsProvider = &mockProvider;
+#endif
 
 PlaceCounts currentCounts;
 bool hasValidData = false;
@@ -208,9 +271,7 @@ uint16_t stateBackground(DisplayState state) {
 void loadCurrentCase() {
   FetchResult result = countsProvider->fetch();
   if (!result.ok) {
-    hasValidData = false;
     currentError = result.errorCode;
-    currentState = DISPLAY_ERROR;
     Serial.printf("Provider error: %s\n", currentError.c_str());
     return;
   }
@@ -222,12 +283,7 @@ void loadCurrentCase() {
                                       currentCounts.mottoCount);
   calculatePercentages(currentCounts, currentGoodPercent, currentMottoPercent);
 
-  Serial.printf("MOCK %u/%u: good=%lu motto=%lu -> %s\n",
-                (unsigned)(mockProvider.index() + 1),
-                (unsigned)MOCK_CASE_COUNT,
-                (unsigned long)currentCounts.goodCount,
-                (unsigned long)currentCounts.mottoCount,
-                stateColorName(currentState));
+  Serial.printf("%s: %s\n", countsProvider->name(), stateColorName(currentState));
 }
 
 void drawThickLine(int x0, int y0, int x1, int y1, uint16_t color) {
@@ -306,7 +362,7 @@ void drawHeader(uint16_t background) {
   canvas.setTextDatum(TL_DATUM);
   canvas.setTextColor(colorInk, colorWhite);
   canvas.setTextSize(2);
-  canvas.drawString("LAUNDRY", 62, 14);
+  canvas.drawString(PHASE2_ENABLED ? "PLACE MOOD" : "LAUNDRY", 62, 14);
   canvas.setTextColor(colorMuted, colorWhite);
   canvas.setTextSize(1);
   canvas.drawString("7-DAY MOOD", 63, 43);
@@ -316,13 +372,15 @@ void drawHeader(uint16_t background) {
   canvas.setTextDatum(MC_DATUM);
   canvas.setTextColor(colorWhite, accent);
   canvas.setTextSize(1);
-  String mockLabel = String(countsProvider->name()) + " " +
+  String mockLabel = PHASE2_ENABLED ? (currentError.length() ? "STALE" : "LIVE") :
+                     String(countsProvider->name()) + " " +
                      String(mockProvider.index() + 1) + "/" +
                      String(MOCK_CASE_COUNT);
   canvas.drawString(mockLabel, 257, 27);
 
   canvas.setTextColor(colorMuted, colorWhite);
-  canvas.drawString("ISSUE #1 PHASE 1", 257, 51);
+  canvas.drawString(PHASE2_ENABLED ? currentCounts.placeId.substring(0, 16) :
+                    String("ISSUE #1 PHASE 1"), 257, 51);
 }
 
 void drawSummary(uint16_t background) {
@@ -376,6 +434,12 @@ void drawFooter(uint16_t background) {
   canvas.setTextDatum(MC_DATUM);
   canvas.setTextColor(colorInk, colorWhite);
   canvas.setTextSize(1);
+  if (PHASE2_ENABLED) {
+    canvas.drawString(currentError.length() ?
+                      String("LAST DATA / ") + currentError + " / C RETRY" :
+                      String("AUTO 5 MIN / C REFRESH"), 160, 227);
+    return;
+  }
   canvas.drawString("A PREV", 57, 227);
   canvas.drawString("B NEXT", 160, 227);
   canvas.drawString("C RELOAD", 263, 227);
@@ -386,7 +450,7 @@ void drawErrorScreen() {
   canvas.setTextDatum(MC_DATUM);
   canvas.setTextColor(colorRed, colorRedSoft);
   canvas.setTextSize(2);
-  canvas.drawString("MOCK DATA ERROR", 160, 100);
+  canvas.drawString(PHASE2_ENABLED ? "NO LIVE DATA" : "MOCK DATA ERROR", 160, 100);
   canvas.setTextSize(1);
   canvas.drawString(currentError, 160, 130);
   canvas.drawString("C: RETRY", 160, 168);
@@ -438,13 +502,48 @@ void setup() {
     while (true) M5.delay(1000);
   }
 
+#if PHASE2_ENABLED
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(PHASE2_WIFI_SSID, PHASE2_WIFI_PASSWORD);
+  lastWifiAttemptAt = millis();
+  configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+  currentError = "CONNECTING WIFI";
+#else
   loadCurrentCase();
+#endif
   drawDashboard();
 }
 
 void loop() {
   M5.update();
 
+#if PHASE2_ENABLED
+  const uint32_t now = millis();
+  if (M5.BtnC.wasPressed()) fetchPending = true;
+  String connectionError;
+  if (WiFi.status() != WL_CONNECTED) {
+    connectionError = "WIFI OFFLINE";
+    if (now - lastWifiAttemptAt >= CONNECTION_RETRY_MS) {
+      lastWifiAttemptAt = now;
+      WiFi.reconnect();
+    }
+  } else if (time(nullptr) < 1704067200) {
+    connectionError = "WAITING FOR CLOCK";
+  }
+  if (connectionError.length()) {
+    fetchPending = true;
+    if (currentError != connectionError) {
+      currentError = connectionError;
+      drawDashboard();
+    }
+  } else if (fetchPending || now - lastFetchAt >= POLL_INTERVAL_MS) {
+    fetchPending = false;
+    loadCurrentCase();
+    lastFetchAt = millis();
+    drawDashboard();
+  }
+#else
   bool changed = false;
   if (M5.BtnA.wasPressed()) {
     mockProvider.previous();
@@ -460,6 +559,7 @@ void loop() {
     loadCurrentCase();
     drawDashboard();
   }
+#endif
 
   M5.delay(1);
 }

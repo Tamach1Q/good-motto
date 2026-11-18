@@ -1,8 +1,8 @@
-# GOOD / MOTTO Core2 — Issue #1 Phase 1
+# GOOD / MOTTO Core2 — Issue #1
 
 GitHub Issue [#1「場所別Good/Motto件数を取得し、割合から画面色を表示する」](https://github.com/Tamach1Q/good-motto/issues/1) のPhase 1（オフライン・モック版）です。
 
-この段階ではWi-Fi、API、データベース、Macコントローラーを使いません。Issueで指定されたAPIレスポンスと同じ形の固定JSONをCore2内に持ち、色判定とUIを実機で確認します。
+既定のモックモードではWi-Fi、API、データベース、Macコントローラーを使いません。固定JSONを使って色判定とUIを確認できます。実API接続の設定は末尾の「Phase 2 の試し方」を参照してください。
 
 ## 現在できること
 
@@ -158,3 +158,10 @@ Arduino IDEのPSRAM設定を`Enabled`にして、もう一度書き込んでく�
 ### 画面がちらつく
 
 本コードは`M5Canvas`へ一度描いてから一括転送します。別の描画処理を追加する場合も、LCDへ直接何度も描かずCanvas内に描いてください。
+
+## Phase 2 の試し方
+
+- そのまま書き込むと従来のオフラインモックが動きます。
+- 実APIを試すときは `phase2_config.h.example` を同じフォルダに `phase2_config.h` としてコピーし、Wi-Fi、StagingのHTTPSオリジン（末尾スラッシュなし）、端末キー、場所ID、接続先の信頼できるルートCAのPEMを設定します。設定ファイルはGitの管理対象外です。
+- 起動時と取得完了から5分ごとに件数を取得します。Cで即時更新します。TLS証明書の検証に必要な時刻をNTPで同期するため、ネットワークからNTPへ到達できる必要があります。
+- 初回取得前の失敗では `NO LIVE DATA`、取得後の失敗では前回の色と `STALE` を表示します。Wi-Fiを切って表示を確認し、復帰後に `LIVE` に戻ることを確認してください。
