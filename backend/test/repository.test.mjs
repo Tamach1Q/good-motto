@@ -97,6 +97,25 @@ test('週次repo: 原子的claim、failed再取得、sending/sent/unknown再取�
   await assert.rejects(repo.finishDelivery(SORA, week, { status: 'sending' }), TypeError);
 });
 
+
+test('週次claim: 許可チーム・受信同意を同じSQLで検証し、撤回後のfailed再確保を拒否する', async t => {
+  const db = await createD1(t);
+  const repo = createRepository(db, { now: () => AT });
+  const week = '2026-11-16';
+  assert.equal(await repo.claimDelivery(SORA, week, { allowedTeamId: 'OTHER_TEAM' }), false);
+  assert.equal(await repo.claimDelivery(AO, week, { allowedTeamId: 'FAKE_TEAM_LOCAL' }), false);
+  assert.equal(await repo.getDelivery(SORA, week), null);
+  assert.equal(await repo.claimDelivery(SORA, week, { allowedTeamId: 'FAKE_TEAM_LOCAL' }), true);
+  await repo.finishDelivery(SORA, week, { status: 'failed', error: 'delivery_not_sent' });
+
+  await repo.updatePreferences(SORA, { terms_accepted: true, feedback_opt_in: false });
+  assert.equal(await repo.claimDelivery(SORA, week, { allowedTeamId: 'FAKE_TEAM_LOCAL' }), false);
+  assert.equal((await repo.getDelivery(SORA, week)).status, 'failed');
+  await repo.updatePreferences(SORA, { terms_accepted: true, feedback_opt_in: true });
+  assert.equal(await repo.claimDelivery(SORA, week, { allowedTeamId: 'FAKE_TEAM_LOCAL' }), true);
+  assert.equal((await repo.getDelivery(SORA, week)).attempts, 2);
+});
+
 test('人物確認後に同意撤回されても、INSERTの現在のD1値で保存を拒否する', async t => {
   const db = await createD1(t);
   const repo = createRepository(db, { now: () => AT });
