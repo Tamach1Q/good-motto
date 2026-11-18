@@ -2,13 +2,20 @@
 output/
 tmp/
 
-# Local device and network secrets
+# Local device, OAuth and network secrets
 **/secrets.h
 **/wifi_credentials.h
 **/*.local.h
+.env
 *.env
 .env.*
 !.env.example
+.dev.vars
+node_modules/
+.wrangler/
+coverage/
+.data/
+backend/.data/
 
 # Arduino build artifacts
 build/
