@@ -1,0 +1,6 @@
+{
+  "display_information": { "name": "Good Motto", "description": "GoodとMottoを本人へのDMで届ける授業用アプリ", "background_color": "#3c5c43" },
+  "features": { "bot_user": { "display_name": "Good Motto", "always_online": false } },
+  "oauth_config": { "scopes": { "bot": ["chat:write", "im:write"] } },
+  "settings": { "org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": false }
+}
