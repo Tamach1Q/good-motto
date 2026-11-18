@@ -12,5 +12,37 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "name": "good-motto-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": {
+        "ENV": "staging",
+        "ALLOWED_ORIGIN": "https://good-motto-staging.tamach1q.workers.dev",
+        "DIGEST_MODE": "dry-run"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "good-motto-staging",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "assets": {
+        "directory": "../frontend/dist",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": [
+          "/api/*"
+        ]
+      },
+      "triggers": {
+        "crons": [
+          "0 0 * * 1"
+        ]
+      }
+    }
+  }
 }
