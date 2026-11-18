@@ -22,3 +22,4 @@ build/
 *.bin
 *.elf
 *.map
+/m5stack/phase2_config.h
