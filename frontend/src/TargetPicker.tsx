@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { errorMessage } from './api';
 import type { Api, Person, Place, Target, TargetType } from './types';
 
@@ -58,11 +59,11 @@ export default function TargetPicker({ api, initialType, onSelect, onCancel, onA
     if (type === 'place' && places[index]) onSelect({ type, place: places[index] });
   }
   return <section aria-labelledby="picker-heading" className="picker screen">
-    <button className="text-button back" onClick={onCancel}><span aria-hidden="true">←</span> メモに戻る</button>
-    <header><p className="eyebrow">対象の選択</p><h1 id="picker-heading" tabIndex={-1}>誰とのこと？</h1><p className="description">候補から選んで、対象を確認します。</p></header>
+
+    <header><h1 id="picker-heading" tabIndex={-1}>対象を選ぶ</h1></header>
     <div className="segmented" aria-label="対象の種類">
-      <button aria-pressed={type === 'person'} onClick={() => { invalidate(); setType('person'); }}>人物</button>
-      <button aria-pressed={type === 'place'} onClick={() => { invalidate(); setType('place'); }}>場所</button>
+      <button aria-pressed={type === 'person'} onClick={() => { flushSync(() => { invalidate(); setType('person'); }); input.current?.focus(); }}>人物</button>
+      <button aria-pressed={type === 'place'} onClick={() => { input.current?.blur(); invalidate(); setType('place'); }}>場所</button>
     </div>
     {type === 'person' ? <>
       <label className="field-label" htmlFor="person-query">Slackの名前で検索</label>
@@ -79,20 +80,18 @@ export default function TargetPicker({ api, initialType, onSelect, onCancel, onA
             if (e.key === 'Enter' && active >= 0) { e.preventDefault(); select(active); }
           }} />
         {query && <button className="clear" aria-label="検索語を消す" onClick={() => { invalidate(); setQuery(''); input.current?.focus(); }}>×</button>}
-      </div><p className="hint">漢字1文字から検索できます。</p>
+      </div>
     </> : <p className="field-label">場所を選ぶ</p>}
     <div className="search-status" role="status" aria-live="polite">
-      {status === 'idle' && (composing ? '文字を確定すると検索します。' : '名前を入力すると候補が表示されます。')}
       {status === 'loading' && <><span className="spinner small" /> 候補を検索しています</>}
-      {status === 'ready' && count > 0 && `${count}件の候補`}
       {status === 'ready' && count === 0 && <div className="empty-state"><strong>該当する{type === 'person' ? 'メンバー' : '場所'}がいません</strong><p>{type === 'person' ? '別の漢字やSlackの表示名で検索してください。' : '場所の登録状況を担当者に確認してください。'}</p></div>}
     </div>
     {status === 'error' && <div className="error-panel" role="alert"><strong>候補を取得できませんでした</strong><p>{error}</p><p>入力したメモは残っています。</p><button className="secondary" onClick={() => setRetry(n => n + 1)}>再試行</button></div>}
-    {people.some((p, i) => people.some((other, j) => i !== j && p.name === other.name)) && <p className="hint">同じ名前の候補があります。識別情報で本人だと確認できない場合は、選ばずに担当者へ確認してください。</p>}
+    {people.some((p, i) => people.some((other, j) => i !== j && p.name === other.name)) && <p className="hint">同姓同名：本人と分かる場合だけ選択</p>}
     <div id="target-results" role="listbox" aria-label={type === 'person' ? 'Slackメンバー候補' : '場所の候補'}>
       {status === 'ready' && (type === 'person' ? people.map((person, i) => <button type="button" role="option" aria-selected={active === i} id={`target-${i}`} key={person.id} className="candidate" onClick={() => select(i)}><PersonLabel person={person} /><span className="candidate-arrow" aria-hidden="true">→</span></button>)
         : places.map((place, i) => <button type="button" role="option" aria-selected={active === i} id={`target-${i}`} key={place.id} className="candidate" onClick={() => select(i)}><span className="avatar" aria-hidden="true">場</span><strong>{place.name}</strong><span className="candidate-arrow" aria-hidden="true">→</span></button>))}
     </div>
-    <p className="picker-footer">選んだだけでは投稿されません。</p>
+    <button className="text-button picker-footer" onClick={onCancel}>戻る</button>
   </section>;
 }
