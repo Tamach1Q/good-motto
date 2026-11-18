@@ -1,0 +1,5 @@
+ENV=development
+ALLOWED_ORIGIN=http://127.0.0.1:5173
+M5_DEVICE_KEY=replace-with-your-local-only-key
+GEMINI_API_KEY=
+GEMINI_MODEL=

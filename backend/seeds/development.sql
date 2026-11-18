@@ -1,0 +1,6 @@
+-- 開発専用。人物・Slack IDはすべて架空。再投入しても同意や投稿を上書きしない。
+INSERT INTO people (id, slack_team_id, slack_user_id, display_name, terms_accepted_at, feedback_opt_in, created_at) VALUES
+  ('00000000-0000-4000-8000-000000000001', 'FAKE_TEAM_LOCAL', 'FAKE_USER_AO', '架空アオ', 1793746800000, 0, 1793746800000),
+  ('00000000-0000-4000-8000-000000000002', 'FAKE_TEAM_LOCAL', 'FAKE_USER_MIDORI', '架空ミドリ', NULL, 0, 1793746800000),
+  ('00000000-0000-4000-8000-000000000003', 'FAKE_TEAM_LOCAL', 'FAKE_USER_SORA', '架空ソラ', 1793746800000, 1, 1793746800000)
+ON CONFLICT (id) DO NOTHING;
