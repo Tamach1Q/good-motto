@@ -23,13 +23,18 @@ function makeApi(): Api {
     post: vi.fn().mockResolvedValue({ post_id: 'post_001', status: 'created' }),
   };
 }
+async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+  const summary = screen.getByLabelText('設定');
+  if (!summary.closest('details')?.open) await user.click(summary);
+}
 async function review(api: Api) {
   const user = userEvent.setup(); render(<App api={api} demo={false} />);
   await screen.findByLabelText('メモの本文');
-  expect(screen.getByRole('button', { name: /内容を確認する/ })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /AIで分類する/ })).toBeDisabled();
   await user.type(screen.getByLabelText('メモの本文'), '最後まで話を聞いてほしかった');
+  await openSettings(user);
   await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
-  await user.click(screen.getByRole('button', { name: /内容を確認する/ }));
+  await user.click(screen.getByRole('button', { name: /AIで分類する/ }));
   await screen.findByRole('heading', { name: '投稿内容を確認' });
   return user;
 }
@@ -46,10 +51,12 @@ describe('投稿の流れ', () => {
     expect(sessionStorage.getItem('good-motto-draft-enabled-v2')).toBeNull();
     await user.type(screen.getByLabelText('メモの本文'), '保存は選択制');
     expect(storedDraft()).toBeNull();
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
     expect(storedDraft()).toEqual({ owner: 'demo', text: '保存は選択制' });
     unmount(); render(<App api={makeApi()} />);
     expect(screen.getByLabelText('メモの本文')).toHaveValue('保存は選択制');
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
     expect(storedDraft()).toBeNull();
     expect(screen.getByLabelText('メモの本文')).toHaveValue('保存は選択制');
@@ -61,7 +68,7 @@ describe('投稿の流れ', () => {
     await user.type(screen.getByRole('combobox'), '田');
     const option = await screen.findByRole('option', { name: /person_003/ });
     await user.click(option);
-    await user.click(screen.getByRole('button', { name: /Good.*よかったこと/ }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
     await user.click(screen.getByRole('button', { name: '投稿する' }));
     await screen.findByRole('heading', { name: '投稿しました' });
     expect(api.post).toHaveBeenCalledWith({ text: '最後まで話を聞いてほしかった', sentiment: 'good', target_type: 'person', target_id: 'person_003' });
@@ -90,8 +97,7 @@ describe('投稿の流れ', () => {
     const api = makeApi(); api.analyze = vi.fn().mockRejectedValue(new Error('分類できませんでした'));
     const user = userEvent.setup(); render(<App api={api} />);
     await user.type(screen.getByLabelText('メモの本文'), '入力したメモ');
-    await user.click(screen.getByRole('checkbox', { name: /本文をサーバー経由/ }));
-    await user.click(screen.getByRole('button', { name: /内容を確認する/ }));
+    await user.click(screen.getByRole('button', { name: /AIで分類する/ }));
     await screen.findByRole('alert');
     expect(screen.getByLabelText('メモの本文')).toHaveValue('入力したメモ');
     expect(api.post).not.toHaveBeenCalled();
@@ -127,7 +133,7 @@ describe('ログインと利用設定', () => {
     const api = makeApi(); api.analyze = vi.fn().mockRejectedValue(new ApiError('期限切れ', 401));
     const user = userEvent.setup(); render(<App api={api} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), '保持するメモ');
-    await user.click(screen.getByRole('button', { name: /内容を確認する/ }));
+    await user.click(screen.getByRole('button', { name: /AIで分類する/ }));
     await screen.findByRole('link', { name: 'Slackでログインする' });
     await user.click(screen.getByRole('button', { name: 'ログイン状態を再確認' }));
     expect(await screen.findByLabelText('メモの本文')).toHaveValue('保持するメモ');
@@ -139,8 +145,9 @@ describe('ログインと利用設定', () => {
     api.analyze = vi.fn().mockRejectedValue(new ApiError('期限切れ', 401));
     const user = userEvent.setup(); render(<App api={api} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), '以前の本文');
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
-    await user.click(screen.getByRole('button', { name: /内容を確認する/ }));
+    await user.click(screen.getByRole('button', { name: /AIで分類する/ }));
     await screen.findByRole('link', { name: 'Slackでログインする' });
     await user.click(screen.getByRole('button', { name: 'ログイン状態を再確認' }));
     expect(await screen.findByLabelText('メモの本文')).toHaveValue('');
@@ -152,13 +159,14 @@ describe('ログインと利用設定', () => {
     api.analyze = vi.fn().mockRejectedValue(new ApiError('利用同意が必要', 403));
     const user = userEvent.setup(); render(<App api={api} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), 'メモ');
-    await user.click(screen.getByRole('button', { name: /内容を確認する/ }));
+    await user.click(screen.getByRole('button', { name: /AIで分類する/ }));
     await screen.findByRole('heading', { name: '利用設定' });
     expect(api.post).not.toHaveBeenCalled();
   });
   it('ログアウトに成功したら本文と保存済み下書きを消す', async () => {
     const api = makeApi(), user = userEvent.setup(); render(<App api={api} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), '下書き');
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
     await user.click(screen.getByRole('button', { name: 'ログアウト' }));
     await screen.findByRole('link', { name: 'Slackでログインする' });
@@ -169,18 +177,21 @@ describe('ログインと利用設定', () => {
     const user = userEvent.setup();
     const { unmount } = render(<App api={makeApi()} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), '同じ本人の下書き');
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
     expect(storedDraft()).toEqual({ owner: 'self', text: '同じ本人の下書き' });
     unmount();
 
     render(<App api={makeApi()} demo={false} />);
     expect(await screen.findByLabelText('メモの本文')).toHaveValue('同じ本人の下書き');
+    await openSettings(user);
     expect(screen.getByRole('checkbox', { name: /このタブに下書き/ })).toBeChecked();
   });
   it('別アカウントでページ再読み込みすると前の下書きを見せず削除する', async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App api={makeApi()} demo={false} />);
     await user.type(await screen.findByLabelText('メモの本文'), 'Aだけのプライベートな内容');
+    await openSettings(user);
     await user.click(screen.getByRole('checkbox', { name: /このタブに下書き/ }));
     expect(storedDraft()?.owner).toBe('self');
     unmount();
@@ -189,6 +200,7 @@ describe('ログインと利用設定', () => {
     vi.mocked(other.me).mockResolvedValue({ person_id: 'other', display_name: '別利用者', terms_accepted: true, feedback_opt_in: false });
     render(<App api={other} demo={false} />);
     expect(await screen.findByLabelText('メモの本文')).toHaveValue('');
+    await openSettings(user);
     expect(screen.getByRole('checkbox', { name: /このタブに下書き/ })).not.toBeChecked();
     expect(storedDraft()).toBeNull();
   });
